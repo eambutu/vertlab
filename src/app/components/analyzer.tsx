@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router";
 import {
   Camera,
   ChevronLeft,
@@ -7,10 +8,14 @@ import {
   ChevronsRight,
   Loader2,
   Pause,
+  MoreHorizontal,
   Play,
-  RotateCcw,
   Settings,
+  Share,
+  Star,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button, buttonVariants } from "./ui/button";
 import { Input } from "./ui/input";
 import { Slider } from "./ui/slider";
@@ -26,6 +31,18 @@ import {
 import { KeyframeStrip } from "./keyframe-strip";
 import { DiffPanel } from "./diff-panel";
 import { MODES } from "./modes";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { ShareClipDrawer } from "./share/share-drawers";
+import { DeleteClipDialog } from "./library/delete-clip-dialog";
+import { store } from "../lib/store";
+import type { Clip } from "../lib/store";
+import { summarize } from "../lib/metrics";
+import { whenRecorded } from "../lib/format";
 
 // The analysis selector combines the built-in two-frame compare with the modes.
 const COMPARE_MODE = "compare";
@@ -49,27 +66,39 @@ import { formatTimecode, preciseMs, detectFps } from "../lib/video-utils";
 import type { Keyframe } from "./types";
 
 interface AnalyzerProps {
-  file: File;
-  onReset: () => void;
+  clip: Clip;
+  videoUrl: string;
 }
+
+const POSTER_WIDTH = 240;
+const SAVE_DEBOUNCE_MS = 400;
 
 // Fixed downscale width for diff comparisons (keeps all frames aligned & fast).
 const DIFF_WIDTH = 160;
 
-export function Analyzer({ file, onReset }: AnalyzerProps) {
+export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
+  const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [url] = useState(() => URL.createObjectURL(file));
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [keyframes, setKeyframes] = useState<Keyframe[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [analysisMode, setAnalysisMode] = useState<string>(loadStoredMode);
-  const [fps, setFps] = useState(30);
+  // A clip that was already worked on reopens in its own mode; a fresh one
+  // starts in the last mode you used.
+  const [analysisMode, setAnalysisMode] = useState<string>(() =>
+    clip.keyframes.length || clip.summary ? clip.mode : loadStoredMode(),
+  );
+  const [fps, setFps] = useState(clip.fps ?? 30);
   const [detecting, setDetecting] = useState(true);
-  const [aspect, setAspect] = useState(16 / 9);
-
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  const [aspect, setAspect] = useState(
+    clip.width && clip.height ? clip.width / clip.height : 16 / 9,
+  );
+  /** True once saved keyframes are back on screen; autosave waits for it. */
+  const [restored, setRestored] = useState(false);
+  const posterRef = useRef<string | undefined>(clip.poster);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Remember the chosen analysis mode across uploads.
   useEffect(() => {
@@ -126,6 +155,75 @@ export function Analyzer({ file, onReset }: AnalyzerProps) {
       imageData: dctx.getImageData(0, 0, DIFF_WIDTH, dh),
     };
   }, [diffHeight]);
+
+  /** Seek and wait for the frame to be ready to draw. */
+  const seekAndWait = useCallback(
+    (t: number) =>
+      new Promise<void>((resolve) => {
+        const v = videoRef.current;
+        if (!v) return resolve();
+        const done = () => {
+          v.removeEventListener("seeked", done);
+          resolve();
+        };
+        v.addEventListener("seeked", done);
+        v.currentTime = t;
+      }),
+    [],
+  );
+
+  /** Small poster frame for the library list. */
+  const grabPoster = useCallback((): string | undefined => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return undefined;
+    const c = document.createElement("canvas");
+    c.width = POSTER_WIDTH;
+    c.height = Math.round((POSTER_WIDTH * v.videoHeight) / v.videoWidth);
+    c.getContext("2d")!.drawImage(v, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.75);
+  }, []);
+
+  /** After the video is ready: redraw saved keyframes and make a poster. */
+  const restore = useCallback(async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    const frames: Keyframe[] = [];
+    for (const t of clip.keyframes) {
+      await seekAndWait(t);
+      const kf = grabFrame();
+      if (kf) frames.push({ ...kf, time: t });
+    }
+    if (!posterRef.current) {
+      await seekAndWait(0);
+      posterRef.current = grabPoster();
+    }
+    await seekAndWait(0);
+    setKeyframes(frames);
+    setRestored(true);
+  }, [clip.keyframes, seekAndWait, grabFrame, grabPoster]);
+
+  // Autosave keyframes, mode and result as you work. Every clip is stored.
+  useEffect(() => {
+    if (!restored) return;
+    const times = keyframes.map((k) => k.time);
+    const timer = setTimeout(() => {
+      const v = videoRef.current;
+      store
+        .updateClip(clip.id, {
+          mode: analysisMode,
+          keyframes: times,
+          summary: summarize(analysisMode, times),
+          fps,
+          duration: v?.duration || undefined,
+          width: v?.videoWidth || undefined,
+          height: v?.videoHeight || undefined,
+          poster: posterRef.current,
+        })
+        .catch(() => toast.error("Couldn't save your changes"));
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [restored, keyframes, analysisMode, fps, clip.id]);
 
   const captureCurrent = useCallback(() => {
     const kf = grabFrame();
@@ -202,15 +300,69 @@ export function Analyzer({ file, onReset }: AnalyzerProps) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-5">
-      <header className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="truncate">VertLab</h1>
-          <p className="truncate text-sm text-muted-foreground">{file.name}</p>
+    <div className="min-h-screen bg-[#f4f3ef]">
+    <div className="mx-auto w-full max-w-3xl space-y-5 px-4 pb-10 pt-3">
+      <header className="flex items-center gap-1">
+        <Link
+          to="/"
+          aria-label="Back to library"
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            "-ml-2 size-11 shrink-0 rounded-full",
+          )}
+        >
+          <ChevronLeft className="size-5" />
+        </Link>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-xl font-semibold">
+            {whenRecorded(clip.createdAt)}
+          </h1>
+          <p className="truncate text-sm text-muted-foreground">{clip.title}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={onReset}>
-          <RotateCcw className="size-4" /> New
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={clip.starred ? "Unstar" : "Star"}
+          aria-pressed={clip.starred}
+          className="size-11 rounded-full"
+          onClick={() => store.updateClip(clip.id, { starred: !clip.starred })}
+        >
+          <Star
+            className={cn(
+              "size-[19px]",
+              clip.starred && "fill-orange-700 text-orange-700",
+            )}
+          />
         </Button>
+        <Button
+          variant="ghost"
+          aria-label="Share"
+          className="size-11 rounded-full p-0 sm:h-9 sm:w-auto sm:border sm:bg-white sm:px-3.5"
+          onClick={() => setShareOpen(true)}
+        >
+          <Share className="size-[18px] sm:size-4" />
+          <span className="hidden sm:inline">Share</span>
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="More actions"
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "icon" }),
+              "-mr-2 size-11 rounded-full",
+            )}
+          >
+            <MoreHorizontal className="size-[18px]" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48 rounded-xl p-1.5">
+            <DropdownMenuItem
+              variant="destructive"
+              className="h-11 rounded-lg px-2.5 text-sm font-medium"
+              onSelect={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="size-[17px]" /> Delete clip
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
 
       {/* Player */}
@@ -228,10 +380,15 @@ export function Analyzer({ file, onReset }: AnalyzerProps) {
               setAspect(v.videoWidth / v.videoHeight);
             }
             setDetecting(true);
-            detectFps(v).then((detected) => {
-              setFps(detected);
-              setDetecting(false);
-            });
+            const detect = clip.fps
+              ? Promise.resolve(clip.fps)
+              : detectFps(v);
+            detect
+              .then((detected) => {
+                setFps(detected);
+                return restore();
+              })
+              .finally(() => setDetecting(false));
           }}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -241,7 +398,7 @@ export function Analyzer({ file, onReset }: AnalyzerProps) {
         {detecting && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black text-sm text-white/80">
             <Loader2 className="size-4 animate-spin" />
-            Analyzing video…
+            {clip.keyframes.length ? "Loading your keyframes…" : "Analyzing video…"}
           </div>
         )}
       </div>
@@ -427,6 +584,18 @@ export function Analyzer({ file, onReset }: AnalyzerProps) {
           <DiffPanel a={selectedFrames[0]} b={selectedFrames[1]} />
         </section>
       )}
+
+      <ShareClipDrawer
+        clip={clip}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+      />
+      <DeleteClipDialog
+        clip={deleteOpen ? clip : null}
+        onOpenChange={setDeleteOpen}
+        onDeleted={() => navigate("/")}
+      />
+    </div>
     </div>
   );
 }

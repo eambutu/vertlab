@@ -1,4 +1,4 @@
-import { jumpHeightInches } from "../../lib/video-utils";
+import { approachMetrics } from "../../lib/metrics";
 import type { Keyframe } from "../types";
 import {
   GroundContactCard,
@@ -21,15 +21,13 @@ export function ApproachJumpPanel({ keyframes }: ApproachJumpPanelProps) {
   }
 
   // Uses the first four keyframes in time order (already sorted upstream).
-  const [penultimate, contact, takeoff, landing] = keyframes;
-  const penultimateSec = contact.time - penultimate.time;
-  const contactMs = (takeoff.time - contact.time) * 1000;
-  const airtime = landing.time - takeoff.time;
-  const jumpIn = jumpHeightInches(airtime);
+  const { penultimateSec, contactMs, airtime, jumpIn } = approachMetrics(
+    keyframes.map((k) => k.time),
+  )!;
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <PenultimateStepCard seconds={penultimateSec} />
+      <PenultimateStepCard seconds={penultimateSec!} />
       <GroundContactCard contactMs={contactMs} />
       <JumpHeightCard jumpIn={jumpIn} airtime={airtime} />
     </div>

@@ -1,4 +1,4 @@
-import { jumpHeightInches } from "../../lib/video-utils";
+import { depthMetrics } from "../../lib/metrics";
 import type { Keyframe } from "../types";
 import { GroundContactCard, JumpHeightCard } from "./jump-cards";
 
@@ -16,10 +16,9 @@ export function DepthJumpPanel({ keyframes }: DepthJumpPanelProps) {
   }
 
   // Uses the first three keyframes in time order (already sorted upstream).
-  const [contact, takeoff, landing] = keyframes;
-  const contactMs = (takeoff.time - contact.time) * 1000;
-  const airtime = landing.time - takeoff.time;
-  const jumpIn = jumpHeightInches(airtime);
+  const { contactMs, airtime, jumpIn } = depthMetrics(
+    keyframes.map((k) => k.time),
+  )!;
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

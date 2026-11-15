@@ -1,5 +1,6 @@
 import { Zap } from "lucide-react";
 import type { Keyframe } from "../types";
+import { RSI_TOP_N as TOP_N, rsiJumps, rsiTop } from "../../lib/metrics";
 import {
   Table,
   TableBody,
@@ -13,29 +14,8 @@ interface TenFiveRsiPanelProps {
   keyframes: Keyframe[];
 }
 
-interface Jump {
-  index: number;
-  contact: number; // seconds on the ground
-  flight: number; // seconds in the air
-  rsi: number; // flight / contact
-}
-
-const TOP_N = 5;
-
 export function TenFiveRsiPanel({ keyframes }: TenFiveRsiPanelProps) {
-  // Keyframes alternate: land, takeoff, land, takeoff, … ending on a landing.
-  // Jump k uses [2k]=landing, [2k+1]=takeoff, [2k+2]=next landing.
-  const jumps: Jump[] = [];
-  for (let i = 0; i + 2 < keyframes.length; i += 2) {
-    const contact = keyframes[i + 1].time - keyframes[i].time;
-    const flight = keyframes[i + 2].time - keyframes[i + 1].time;
-    jumps.push({
-      index: jumps.length + 1,
-      contact,
-      flight,
-      rsi: contact > 0 ? flight / contact : 0,
-    });
-  }
+  const jumps = rsiJumps(keyframes.map((k) => k.time));
 
   if (jumps.length === 0) {
     return (
@@ -47,17 +27,8 @@ export function TenFiveRsiPanel({ keyframes }: TenFiveRsiPanelProps) {
     );
   }
 
-  // Identify the top-N jumps by RSI (the 10-5 test scores your best 5).
-  const topIds = new Set(
-    [...jumps]
-      .sort((a, b) => b.rsi - a.rsi)
-      .slice(0, TOP_N)
-      .map((j) => j.index),
-  );
-
-  const topJumps = jumps.filter((j) => topIds.has(j.index));
-  const bestAvg =
-    topJumps.reduce((sum, j) => sum + j.rsi, 0) / topJumps.length;
+  // The 10-5 test scores your best 5.
+  const { topIds, bestAvg } = rsiTop(jumps);
 
   return (
     <div className="space-y-4">
