@@ -1,6 +1,6 @@
 // Supabase implementation of ClipStore. Schema, RLS and the share-view
 // function live in supabase/; see plans/2-clip-library-and-sharing.md.
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClipSummary } from "../metrics";
 import type {
   Clip,
@@ -51,37 +51,38 @@ function extOf(file: File) {
 }
 
 export class SupabaseClipStore implements ClipStore {
-  private sb: SupabaseClient;
   private listeners = new Set<() => void>();
-  private sessionPromise: Promise<string> | null = null;
   /** Videos picked on this device, kept until (and after) their upload. */
   private localVideos = new Map<string, File>();
   private uploading = new Set<string>();
   private signedUrls = new Map<string, { url: string; expires: number }>();
 
-  constructor(private url: string, private anonKey: string) {
-    this.sb = createClient(url, anonKey);
-  }
-
-  /**
-   * Signed-in user id. Created lazily, so someone who only opens a share
-   * link never gets an account.
-   */
-  private get session(): Promise<string> {
-    this.sessionPromise ??= this.ensureSession().catch((e) => {
-      this.sessionPromise = null;
-      throw e;
+  constructor(
+    private sb: SupabaseClient,
+    private url: string,
+    private anonKey: string,
+  ) {
+    // A different account means a different library: drop this device's
+    // caches and let every screen reload.
+    sb.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "USER_UPDATED") {
+        if (event === "SIGNED_OUT") {
+          this.localVideos.clear();
+          this.uploading.clear();
+          this.signedUrls.clear();
+        }
+        // Outside the auth callback, so queries don't wait on its lock.
+        setTimeout(() => this.emit(), 0);
+      }
     });
-    return this.sessionPromise;
   }
 
-  /** Every device gets an anonymous account on first launch. */
-  private async ensureSession(): Promise<string> {
-    const { data } = await this.sb.auth.getSession();
-    if (data.session) return data.session.user.id;
-    const { data: signIn, error } = await this.sb.auth.signInAnonymously();
-    if (error || !signIn.user) throw error ?? new Error("Sign-in failed");
-    return signIn.user.id;
+  /** The signed-in user's id. Library screens are only shown when signed in. */
+  private get session(): Promise<string> {
+    return this.sb.auth.getSession().then(({ data }) => {
+      if (!data.session) throw new Error("Not signed in");
+      return data.session.user.id;
+    });
   }
 
   private emit() {

@@ -27,13 +27,17 @@ Share a jump, Share a day, Shared links, and the three viewer screens).
 
 ## Identity
 
-- On first launch, call **`supabase.auth.signInAnonymously()`**. Every device
-  gets a real `auth.users` row and JWT, so RLS works from the first clip with
-  no sign-up screen.
-- Later, add "Back up / use on another device". It upgrades the anonymous user
-  in place with `updateUser({ email })` (magic link), so `user_id` doesn't change.
-- Turn on anonymous sign-ins and CAPTCHA (Turnstile) in Auth settings to limit
-  abuse. Run a cron to delete anonymous users that have no clips after 30 days.
+- **Email + password accounts** (Supabase Auth). The library, clip and
+  settings screens require sign-in; share links (`/j`, `/d`) stay public.
+- New accounts must **confirm their email** before signing in. The link
+  returns to the app's origin, and supabase-js picks the session out of the URL.
+- Passwords need at least 8 characters. There's no password reset screen yet.
+- **Email delivery:** Supabase's built-in sender only delivers to members of
+  the Supabase organization, and only a few emails per hour. Before other
+  people sign up, set up custom SMTP (e.g. Resend) under Authentication → SMTP
+  Settings.
+- Anonymous sign-ins (used by an earlier build) are off. Any leftover
+  anonymous session is signed out on load.
 
 ## Schema
 
@@ -178,8 +182,8 @@ at http://127.0.0.1:54323 shows the tables and bucket.
 ### Cloud project
 
 The current dev project is `vertlab` (ref `hetzjohsbssvkyqkvgxi`, us-east-1,
-free plan, so uploads are capped at 50 MB per file). Its anonymous sign-ins,
-site URL and redirect URLs are already configured from `supabase/config.toml`;
+free plan, so uploads are capped at 50 MB per file). Its email + password
+settings, site URL and redirect URLs are already configured from `supabase/config.toml`;
 the database password is in `.env.local`. To set up another project:
 
 ```bash
@@ -189,8 +193,8 @@ npx supabase@2.20.12 db push
 npx supabase@2.20.12 functions deploy share-view --no-verify-jwt
 ```
 
-In the dashboard: Authentication → Sign In / Providers → turn on
-**Anonymous sign-ins**, and raise Storage's global file size limit if clips
+In the dashboard: Authentication → Sign In / Providers → make sure
+**Email** is on with "Confirm email" enabled (or run `config push`), and raise Storage's global file size limit if clips
 can exceed 50 MB. Set the project URL and anon key in the hosting
 environment's `VITE_SUPABASE_*` variables, and add the site's URL under
 Authentication → URL Configuration. `PUBLIC_SUPABASE_URL` is only needed

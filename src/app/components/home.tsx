@@ -1,4 +1,8 @@
-import { Cloud, Timer } from "lucide-react";
+import type { ReactNode } from "react";
+import { Link } from "react-router";
+import { Cloud, Settings, Timer } from "lucide-react";
+import { buttonVariants } from "./ui/button";
+import { cn } from "./ui/utils";
 import { Uploader } from "./uploader";
 import { isCloudBacked } from "../lib/store";
 
@@ -17,7 +21,17 @@ function Mark() {
   );
 }
 
-export function Home({ onFile }: { onFile: (file: File) => void }) {
+/** Brand hero on the warm grid background, shared by Home and sign-in. */
+export function HeroShell({
+  children,
+  footer,
+  corner,
+}: {
+  children: ReactNode;
+  footer?: ReactNode;
+  /** Top-right control, e.g. the settings gear. */
+  corner?: ReactNode;
+}) {
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f4f3ef] text-foreground">
       <div className="pointer-events-none absolute inset-0">
@@ -25,6 +39,8 @@ export function Home({ onFile }: { onFile: (file: File) => void }) {
         <div className="absolute inset-0 bg-[radial-gradient(900px_420px_at_50%_-10%,rgba(255,255,255,0.95),transparent_70%)]" />
         <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-[#f4f3ef] to-transparent" />
       </div>
+
+      {corner && <div className="absolute right-3 top-3 z-10">{corner}</div>}
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-lg flex-col items-center justify-center px-4 py-16 sm:px-5">
         <div className="mb-8 flex w-full min-w-0 flex-col items-center text-center">
@@ -51,22 +67,50 @@ export function Home({ onFile }: { onFile: (file: File) => void }) {
           </div>
         </div>
 
-        <Uploader onFile={onFile} />
+        {children}
 
-        <p className="mt-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          {isCloudBacked ? (
-            <>
-              <Cloud className="size-3.5" />
-              Clips are saved to your library automatically
-            </>
-          ) : (
-            <>
-              <Timer className="size-3.5" />
-              Videos stay on this device
-            </>
-          )}
-        </p>
+        {footer && (
+          <div className="mt-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+export function Home({ onFile }: { onFile: (file: File) => void }) {
+  return (
+    <HeroShell
+      corner={
+        isCloudBacked && (
+          <Link
+            to="/settings"
+            aria-label="Settings"
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "icon" }),
+              "size-11 rounded-full text-zinc-700",
+            )}
+          >
+            <Settings className="size-[21px]" />
+          </Link>
+        )
+      }
+      footer={
+        isCloudBacked ? (
+          <>
+            <Cloud className="size-3.5" />
+            Clips are saved to your library automatically
+          </>
+        ) : (
+          <>
+            <Timer className="size-3.5" />
+            Videos stay on this device
+          </>
+        )
+      }
+    >
+      <Uploader onFile={onFile} />
+    </HeroShell>
   );
 }

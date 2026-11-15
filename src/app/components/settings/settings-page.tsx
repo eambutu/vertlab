@@ -1,5 +1,6 @@
-import { Link } from "react-router";
-import { ChevronRight, Link2, Link2Off, Copy } from "lucide-react";
+import { Link, useNavigate } from "react-router";
+import { ChevronRight, Link2, Link2Off, Copy, LogOut } from "lucide-react";
+import { signOut, useAuth } from "../../lib/auth";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { Button } from "../ui/button";
@@ -29,6 +30,8 @@ import type { Clip, Share } from "../../lib/store";
 export function SettingsPage() {
   const shares = useShares();
   const unit = useUnit();
+  const auth = useAuth();
+  const navigate = useNavigate();
 
   return (
     <Page>
@@ -50,6 +53,28 @@ export function SettingsPage() {
             </Link>
           </ListCard>
         </section>
+
+        {auth.status === "signed-in" && auth.email && (
+          <section className="flex flex-col gap-1.5">
+            <SectionLabel>Account</SectionLabel>
+            <ListCard>
+              <div className="flex min-h-14 items-center gap-3 pl-3.5 pr-3">
+                <span className="min-w-0 flex-1 truncate text-[15px]">{auth.email}</span>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  await signOut();
+                  navigate("/");
+                }}
+                className="flex min-h-14 w-full items-center gap-3 pl-3.5 pr-3 text-left text-[15px] text-red-700 hover:bg-red-50"
+              >
+                <LogOut className="size-[18px]" />
+                Sign out
+              </button>
+            </ListCard>
+          </section>
+        )}
 
         <section className="flex flex-col gap-1.5">
           <SectionLabel>Units</SectionLabel>

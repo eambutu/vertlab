@@ -3,18 +3,16 @@ import { toast } from "sonner";
 import type { HeightUnit } from "../metrics";
 import { LocalClipStore } from "./local-store";
 import { SupabaseClipStore } from "./supabase-store";
+import { supabase, SUPABASE_ANON_KEY, SUPABASE_URL } from "../supabase";
 import type { Clip, ClipStore, Share } from "./types";
 
 export type * from "./types";
 export { localDay } from "./local-store";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
 /** Supabase when configured (see .env.example), otherwise this browser only. */
 export const store: ClipStore =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? new SupabaseClipStore(SUPABASE_URL, SUPABASE_ANON_KEY)
+  supabase && SUPABASE_URL && SUPABASE_ANON_KEY
+    ? new SupabaseClipStore(supabase, SUPABASE_URL, SUPABASE_ANON_KEY)
     : new LocalClipStore();
 
 /** False when clips and links live only in this browser. */
