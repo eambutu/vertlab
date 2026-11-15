@@ -32,8 +32,14 @@ export function ClipPage() {
   if (videoUrl === null) {
     return (
       <Page className="flex min-h-screen flex-col items-center justify-center text-center">
-        <h1 className="text-xl font-semibold">This clip isn't in your library</h1>
-        <p className="mt-2 text-sm text-muted-foreground">It may have been deleted.</p>
+        <h1 className="text-xl font-semibold">
+          {clip ? "This clip's video didn't finish uploading" : "This clip isn't in your library"}
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {clip
+            ? "Delete it from your library and add the video again."
+            : "It may have been deleted."}
+        </p>
         <Button asChild variant="outline" className="mt-6 rounded-xl bg-white">
           <Link to="/">Back to library</Link>
         </Button>

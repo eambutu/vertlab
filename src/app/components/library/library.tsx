@@ -45,7 +45,7 @@ export function useAddClip() {
     } catch (e) {
       console.error(e);
       toast.error("Couldn't save that video", {
-        description: "Your browser may be out of storage space.",
+        description: "Check your connection and try again.",
       });
     }
   };

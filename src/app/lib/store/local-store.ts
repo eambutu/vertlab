@@ -103,6 +103,7 @@ export class LocalClipStore implements ClipStore {
       keyframes: [],
       summary: null,
       starred: false,
+      videoStatus: "ready",
     };
     const tx = db.transaction(["clips", "videos"], "readwrite");
     tx.objectStore("clips").put(clip);

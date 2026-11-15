@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 import type { HeightUnit } from "../metrics";
 import { LocalClipStore } from "./local-store";
+import { SupabaseClipStore } from "./supabase-store";
 import type { Clip, ClipStore, Share } from "./types";
 
 export type * from "./types";
 export { localDay } from "./local-store";
 
-// Swap for the Supabase implementation once it exists (see the plan doc).
-export const store: ClipStore = new LocalClipStore();
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+
+/** Supabase when configured (see .env.example), otherwise this browser only. */
+export const store: ClipStore =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? new SupabaseClipStore(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : new LocalClipStore();
+
+/** False when clips and links live only in this browser. */
+export const isCloudBacked = store instanceof SupabaseClipStore;
 
 /** Loads `load()` and reloads it whenever the store changes. */
 function useStoreQuery<T>(load: () => Promise<T>, deps: unknown[]) {
@@ -17,9 +28,18 @@ function useStoreQuery<T>(load: () => Promise<T>, deps: unknown[]) {
   useEffect(() => {
     let alive = true;
     const refresh = () =>
-      run().then((d) => {
-        if (alive) setData(d);
-      });
+      run()
+        .then((d) => {
+          if (alive) setData(d);
+        })
+        .catch((e) => {
+          console.error(e);
+          if (alive)
+            toast.error("Couldn't load your library", {
+              id: "store-error",
+              description: "Check your connection and reload.",
+            });
+        });
     refresh();
     const unsub = store.subscribe(refresh);
     return () => {

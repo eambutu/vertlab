@@ -13,15 +13,17 @@ Share a jump, Share a day, Shared links, and the three viewer screens).
 
 ## Phasing
 
-1. **Frontend + local store (this branch).** All UI is built against a
-   `ClipStore` interface (`src/app/lib/store/types.ts`). An IndexedDB
-   implementation (`local-store.ts`) makes the whole flow work today. Share
-   links only resolve in the same browser, which is enough to build and test
-   the UI.
-2. **Supabase store.** A `supabase-store.ts` that implements the same
-   interface, plus the schema, storage bucket and one edge function below. Pick
-   the implementation at startup based on whether `VITE_SUPABASE_URL` is set.
-3. **Later:** cross-device sign-in, link previews (OG tags), transcoding.
+1. **Frontend + local store (done).** All UI is built against a `ClipStore`
+   interface (`src/app/lib/store/types.ts`). An IndexedDB implementation
+   (`local-store.ts`) is used when Supabase isn't configured. Share links then
+   only open in the same browser.
+2. **Supabase store (done).** `supabase-store.ts` implements the same
+   interface. The schema, RLS, bucket and RPCs are in
+   `supabase/migrations/`, and the public lookup is `supabase/functions/share-view`.
+   The app uses Supabase whenever `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_ANON_KEY` are set.
+3. **Later:** cross-device sign-in, link previews (OG tags), resumable (TUS)
+   uploads, transcoding.
 
 ## Identity
 
@@ -48,10 +50,10 @@ create table clips (
   duration     real,
   width        int,
   height       int,
-  summary      jsonb,                         -- cached result: { value, unit, sub, stats[] }
+  summary      jsonb,                         -- cached result: { value, kind, sub, stats[] }
   starred      boolean not null default false,
+  poster       text,                          -- ~10-20 KB JPEG data URL (240 px wide)
   video_path   text,                          -- storage path, null until upload finishes
-  poster_path  text,
   updated_at   timestamptz not null default now()
 );
 create index on clips (user_id, day desc, created_at desc);
@@ -96,16 +98,17 @@ clients can't choose tokens.
 
 ## Storage
 
-- One **private** bucket, `clips`. Paths: `{user_id}/{clip_id}/video.{ext}` and
-  `{user_id}/{clip_id}/poster.jpg`.
+- One **private** bucket, `clips`. Path: `{user_id}/{clip_id}/video.{ext}`.
+  Posters are small enough to live in the `clips` row, so the library needs
+  no signed URLs to draw thumbnails.
 - Storage RLS: `(storage.foldername(name))[1] = auth.uid()::text` for all ops.
 - Upload with **resumable (TUS) uploads** for videos. Phone slow-mo clips run to
   hundreds of MB. The free plan caps files at 50 MB, so this needs the Pro plan
   with a higher per-file limit, or client-side downscaling later.
-- Save order: insert the clip row with keyframes and summary right away. Upload
-  the poster (small), then stream the video in the background and set
-  `video_path` when it finishes. The library shows the clip immediately, with
-  an "Uploading" state until `video_path` is set.
+- Save order: insert the clip row right away and open the analyzer on the
+  local file. Upload the video in the background and set `video_path` when it
+  finishes. The library shows "Uploading video…" until then. v1 uses a
+  standard upload; switch to TUS for big files.
 
 ## Public viewing: `share-view` edge function
 
@@ -133,8 +136,8 @@ even through caches. Signed URLs expire on their own.
 | `updateClip(id, patch)` | update (debounced from the analyzer) |
 | `deleteClip(id)` | delete row + `storage.remove([video, poster])` |
 | `getVideo(id)` | `createSignedUrl(video_path)`, cached in memory |
-| `shareClip(id)` | reuse an active clip share, else insert share + share_clip |
-| `shareDay(day, clipIds)` | upsert the active day share, then replace its `share_clips` |
+| `shareClip(id)` | `rpc('share_clip')`: reuse the live link or create one |
+| `shareDay(day, clipIds)` | `rpc('share_day')`: upsert the live day link and replace its clips |
 | `stopSharing(shareId)` | `update shares set revoked_at = now()` |
 | `listShares()` | active shares joined with their clips |
 | `openShare(token)` | `fetch(share-view)` |
@@ -157,3 +160,38 @@ the same after each mutation. Realtime isn't needed for one user on one device.
   keyframes (it's saved even if you leave immediately), or only once a
   keyframe exists? The plan saves on open, since the goal is "store by default".
 - Is there a size or length cap per clip? This affects the storage plan and cost.
+
+## Running it
+
+### Local stack (needs Docker)
+
+```bash
+npx supabase@2.20.12 start          # Postgres, auth, storage, edge runtime
+cp supabase/functions/.env.example supabase/functions/.env
+npx supabase@2.20.12 functions serve # serves share-view with hot reload
+```
+
+Put the printed `API URL` and `anon key` in `.env.local` as
+`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`, then `npm run dev`. Studio
+at http://127.0.0.1:54323 shows the tables and bucket.
+
+### Cloud project
+
+The current dev project is `vertlab` (ref `hetzjohsbssvkyqkvgxi`, us-east-1,
+free plan, so uploads are capped at 50 MB per file). Its anonymous sign-ins,
+site URL and redirect URLs are already configured from `supabase/config.toml`;
+the database password is in `.env.local`. To set up another project:
+
+```bash
+npx supabase@2.20.12 login
+npx supabase@2.20.12 link --project-ref <ref>
+npx supabase@2.20.12 db push
+npx supabase@2.20.12 functions deploy share-view --no-verify-jwt
+```
+
+In the dashboard: Authentication → Sign In / Providers → turn on
+**Anonymous sign-ins**, and raise Storage's global file size limit if clips
+can exceed 50 MB. Set the project URL and anon key in the hosting
+environment's `VITE_SUPABASE_*` variables, and add the site's URL under
+Authentication → URL Configuration. `PUBLIC_SUPABASE_URL` is only needed
+locally.

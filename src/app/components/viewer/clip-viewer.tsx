@@ -67,6 +67,7 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
           ref={video}
           src={clip.videoUrl}
           poster={clip.poster}
+          crossOrigin="anonymous"
           playsInline
           preload="metadata"
           className="size-full object-contain"

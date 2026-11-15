@@ -85,6 +85,11 @@ export function ShareClipDrawer({
             </div>
 
             <LinkField url={share ? shareUrl(share) : undefined} />
+            {clip.videoStatus === "uploading" && (
+              <p className="-mt-2 text-xs text-muted-foreground">
+                The video is still uploading. The link opens once it's done.
+              </p>
+            )}
 
             <StopSharingButton
               onClick={async () => {

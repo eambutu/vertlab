@@ -1,5 +1,6 @@
-import { Timer } from "lucide-react";
+import { Cloud, Timer } from "lucide-react";
 import { Uploader } from "./uploader";
+import { isCloudBacked } from "../lib/store";
 
 const MODES = ["Approach jump", "Depth jump", "10-5 RSI"];
 
@@ -53,8 +54,17 @@ export function Home({ onFile }: { onFile: (file: File) => void }) {
         <Uploader onFile={onFile} />
 
         <p className="mt-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Timer className="size-3.5" />
-          Videos stay on this device
+          {isCloudBacked ? (
+            <>
+              <Cloud className="size-3.5" />
+              Clips are saved to your library automatically
+            </>
+          ) : (
+            <>
+              <Timer className="size-3.5" />
+              Videos stay on this device
+            </>
+          )}
         </p>
       </div>
     </div>

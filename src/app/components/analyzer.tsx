@@ -370,6 +370,9 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
         <video
           ref={videoRef}
           src={url}
+          // Signed storage URLs are cross-origin; without CORS mode the
+          // canvas frame grabs would be blocked.
+          crossOrigin="anonymous"
           playsInline
           style={{ aspectRatio: aspect }}
           className="max-h-[70vh] w-full bg-black object-contain"

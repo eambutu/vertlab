@@ -18,6 +18,11 @@ export interface Clip {
   starred: boolean;
   /** Small JPEG data URL used for list thumbnails. */
   poster?: string;
+  /**
+   * Whether the video is stored. "uploading" while it's still being sent;
+   * "failed" if this device lost it before the upload finished.
+   */
+  videoStatus: "ready" | "uploading" | "failed";
 }
 
 export type ClipPatch = Partial<
