@@ -282,6 +282,17 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
     });
   }, []);
 
+  // Clicking a keyframe jumps the video to it; in compare mode it also
+  // toggles the frame in or out of the comparison.
+  const clickKeyframe = useCallback(
+    (id: string) => {
+      const kf = keyframes.find((k) => k.id === id);
+      if (kf) seekTo(kf.time);
+      if (analysisMode === COMPARE_MODE) toggleSelect(id);
+    },
+    [keyframes, seekTo, analysisMode, toggleSelect],
+  );
+
   const changeMode = useCallback((id: string) => {
     setSelected([]); // switching analysis type resets the comparison selection
     setAnalysisMode(id);
@@ -566,10 +577,9 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
         <KeyframeStrip
           keyframes={keyframes}
           selected={selected}
-          onSelect={toggleSelect}
+          onSelect={clickKeyframe}
           onRemove={removeKeyframe}
           labels={frameLabels}
-          selectable={analysisMode === COMPARE_MODE}
         />
       </section>
 
