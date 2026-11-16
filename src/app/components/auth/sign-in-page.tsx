@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Eye, EyeOff, Loader2, Lock, MailCheck } from "lucide-react";
+import { Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -106,16 +106,9 @@ export function SignInPage() {
     }
   }
 
-  const footer = (
-    <>
-      <Lock className="size-3.5" />
-      Your clips are private until you share them
-    </>
-  );
-
   if (sentTo) {
     return (
-      <HeroShell footer={footer}>
+      <HeroShell>
         <CheckEmail
           email={sentTo}
           onBack={() => {
@@ -128,7 +121,7 @@ export function SignInPage() {
   }
 
   return (
-    <HeroShell footer={footer}>
+    <HeroShell>
       <form className={CARD} onSubmit={submit} noValidate>
         <ToggleGroup
           type="single"
@@ -169,7 +162,7 @@ export function SignInPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="h-11 rounded-xl bg-white"
+              className="h-11 rounded-xl border-black/15 bg-white shadow-xs focus-visible:border-zinc-400"
             />
           </div>
           <div className="space-y-2">
@@ -184,7 +177,7 @@ export function SignInPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 aria-describedby={mode === "sign-up" ? "password-hint" : undefined}
-                className="h-11 rounded-xl bg-white pr-11"
+                className="h-11 rounded-xl border-black/15 bg-white pr-11 shadow-xs focus-visible:border-zinc-400"
               />
               <Button
                 type="button"

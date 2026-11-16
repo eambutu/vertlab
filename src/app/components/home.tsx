@@ -6,8 +6,6 @@ import { cn } from "./ui/utils";
 import { Uploader } from "./uploader";
 import { isCloudBacked } from "../lib/store";
 
-const MODES = ["Approach jump", "Depth jump", "10-5 RSI"];
-
 function Mark() {
   return (
     <div
@@ -52,19 +50,9 @@ export function HeroShell({
             VertLab
           </h1>
           <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-muted-foreground">
-            Frame-by-frame jump analysis, down to the millisecond.
+            Frame-by-frame analysis of approach jumps, depth jumps and 10-5 RSI,
+            down to the millisecond.
           </p>
-
-          <div className="mt-5 flex w-full min-w-0 flex-wrap items-center justify-center gap-2">
-            {MODES.map((mode) => (
-              <span
-                key={mode}
-                className="rounded-full border border-black/8 bg-white/80 px-3 py-1 text-xs text-zinc-600 shadow-sm"
-              >
-                {mode}
-              </span>
-            ))}
-          </div>
         </div>
 
         {children}

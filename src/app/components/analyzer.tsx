@@ -228,10 +228,17 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   const captureCurrent = useCallback(() => {
     const kf = grabFrame();
     if (!kf) return;
+    // Same frame twice would skew every mode's maths; keep one.
+    const halfFrame = 0.5 / fps;
+    if (keyframes.some((k) => Math.abs(k.time - kf.time) < halfFrame)) {
+      toast("This frame is already a keyframe", { id: "dup-keyframe" });
+      return;
+    }
+    // Keyframes stay in time order wherever you capture from.
     setKeyframes((prev) =>
       [...prev, kf].sort((a, b) => a.time - b.time),
     );
-  }, [grabFrame]);
+  }, [grabFrame, fps, keyframes]);
 
   const seekTo = useCallback((t: number) => {
     const v = videoRef.current;

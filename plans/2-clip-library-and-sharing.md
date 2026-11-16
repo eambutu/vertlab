@@ -151,6 +151,14 @@ the same after each mutation. Realtime isn't needed for one user on one device.
 
 ## Hosting & URLs
 
+Live at **https://vertlab.vercel.app** (Vercel project `vertlab`, deployed
+from this folder with `npx vercel@latest deploy --prod`). `vercel.json` builds
+with Vite and rewrites every path to `index.html`. Production and preview
+both have `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; the anon key is
+public by design. Supabase's site URL and redirect list include the live URL
+and localhost.
+
+
 - Share URLs: `/j/:token` (one jump), `/d/:token` (a day), `/d/:token/:n` (a
   jump inside a shared day). The SPA host needs a catch-all rewrite to
   `index.html`.
