@@ -5,6 +5,7 @@ import { formatHeadline, formatStat, keyframeLabel } from "../../lib/metrics";
 import { useUnit } from "../../lib/store";
 import type { SharedClip } from "../../lib/store";
 import { modeLabel } from "../library/parts";
+import { Slider } from "../ui/slider";
 import { useFrameThumbs } from "./use-frame-thumbs";
 
 const MAX_KEYFRAMES = 6;
@@ -18,6 +19,8 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [slow, setSlow] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
   const fps = clip.fps ?? 30;
 
   useEffect(() => {
@@ -27,7 +30,21 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
   // Reset when navigating between jumps in a day.
   useEffect(() => {
     setPlaying(false);
+    setCurrent(0);
+    setDuration(0);
   }, [clip.id]);
+
+  // Keep the scrubber in sync while playing.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const v = video.current;
+      if (v) setCurrent(v.currentTime);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   const times = clip.keyframes.slice(0, MAX_KEYFRAMES);
   const thumbs = useFrameThumbs(clip.videoUrl, times);
@@ -72,6 +89,7 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
           preload="metadata"
           className="size-full object-contain"
           onClick={toggle}
+          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
@@ -146,6 +164,16 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
           )}
         </div>
       </div>
+
+      {/* Scrubber */}
+      <Slider
+        value={[current]}
+        min={0}
+        max={duration || 0}
+        step={0.001}
+        onValueChange={([v]) => seek(v)}
+        className="py-2"
+      />
 
       {clip.summary && (
         <div className="grid grid-cols-2 gap-2">
