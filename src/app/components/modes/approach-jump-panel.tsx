@@ -1,4 +1,5 @@
-import { approachMetrics } from "../../lib/metrics";
+import { approachMetrics, contactJumpErrors } from "../../lib/metrics";
+import { useShowErrors } from "../../lib/store";
 import type { Keyframe } from "../types";
 import {
   GroundContactCard,
@@ -8,9 +9,11 @@ import {
 
 interface ApproachJumpPanelProps {
   keyframes: Keyframe[];
+  fps: number;
 }
 
-export function ApproachJumpPanel({ keyframes }: ApproachJumpPanelProps) {
+export function ApproachJumpPanel({ keyframes, fps }: ApproachJumpPanelProps) {
+  const showErrors = useShowErrors();
   if (keyframes.length < 4) {
     return (
       <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
@@ -21,15 +24,20 @@ export function ApproachJumpPanel({ keyframes }: ApproachJumpPanelProps) {
   }
 
   // Uses the first four keyframes in time order (already sorted upstream).
-  const { penultimateSec, contactMs, airtime, jumpIn } = approachMetrics(
-    keyframes.map((k) => k.time),
-  )!;
+  const m = approachMetrics(keyframes.map((k) => k.time))!;
+  const { penultimateSec, contactMs, airtime, jumpIn } = m;
+  const err = showErrors ? contactJumpErrors(m, fps) : undefined;
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <PenultimateStepCard seconds={penultimateSec!} />
-      <GroundContactCard contactMs={contactMs} />
-      <JumpHeightCard jumpIn={jumpIn} airtime={airtime} />
+      <PenultimateStepCard seconds={penultimateSec!} err={err?.penultimateSec} />
+      <GroundContactCard contactMs={contactMs} err={err?.contactMs} />
+      <JumpHeightCard
+        jumpIn={jumpIn}
+        airtime={airtime}
+        err={err?.jumpIn}
+        airtimeErr={err?.airtime}
+      />
     </div>
   );
 }

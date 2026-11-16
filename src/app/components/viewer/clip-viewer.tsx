@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 import { cn } from "../ui/utils";
-import { formatHeadline, formatStat, keyframeLabel } from "../../lib/metrics";
-import { useUnit } from "../../lib/store";
+import { formatHeadline, formatStat, keyframeLabel, summarize } from "../../lib/metrics";
+import { useShowErrors, useUnit } from "../../lib/store";
 import type { SharedClip } from "../../lib/store";
 import { modeLabel } from "../library/parts";
 import { Slider } from "../ui/slider";
@@ -16,6 +16,7 @@ const PILL =
 /** Read-only player + numbers for one shared jump. */
 export function ClipViewer({ clip }: { clip: SharedClip }) {
   const unit = useUnit();
+  const showErrors = useShowErrors();
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [slow, setSlow] = useState(false);
@@ -49,6 +50,11 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
   const times = clip.keyframes.slice(0, MAX_KEYFRAMES);
   const thumbs = useFrameThumbs(clip.videoUrl, times);
   const headline = clip.summary ? formatHeadline(clip.summary, unit) : null;
+  // Recompute stats with ± ranges from the clip's frame rate when asked for.
+  const stats =
+    (showErrors && summarize(clip.mode, clip.keyframes, fps)?.stats) ||
+    clip.summary?.stats ||
+    [];
   const aspect =
     clip.width && clip.height ? clip.width / clip.height : 9 / 16;
 
@@ -177,14 +183,14 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
 
       {clip.summary && (
         <div className="grid grid-cols-2 gap-2">
-          {clip.summary.stats.slice(0, 2).map((s) => (
+          {stats.slice(0, 2).map((s) => (
             <div
               key={s.label}
               className="flex flex-col gap-1 rounded-[14px] border border-black/8 bg-white px-3 py-2.5"
             >
               <span className="text-[11px] text-muted-foreground">{s.label}</span>
               <span className="font-mono text-[19px] font-semibold tabular-nums">
-                {formatStat(s, unit)}
+                {formatStat(s, unit, showErrors)}
               </span>
             </div>
           ))}

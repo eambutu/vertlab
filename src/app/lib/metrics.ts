@@ -74,6 +74,85 @@ export function rsiTop(jumps: RsiJump[]) {
   return { topIds, bestAvg };
 }
 
+/* ---------- Error bars from frame quantization ----------
+ *
+ * Every keyframe snaps to a whole frame, so an event really happened somewhere
+ * in the frame interval before the one marked. A span between two keyframes is
+ * therefore off by up to ±1 frame. These are worst-case bounds for frame rate
+ * alone; picking the wrong frame by eye adds to them.
+ */
+
+const G = 9.81; // m/s²
+const IN_PER_M = 39.3701;
+
+/** Length of one frame in seconds. */
+export function frameSeconds(fps: number): number {
+  return fps > 0 ? 1 / fps : 1 / 30;
+}
+
+/** ± inches on a jump height from ±dt on its airtime: dh = (g·t/4)·dt. */
+export function heightErrInches(airtime: number, dt: number): number {
+  return ((G * airtime) / 4) * dt * IN_PER_M;
+}
+
+/** ± on flight/contact when the shared takeoff frame can shift both spans. */
+export function rsiErr(contact: number, flight: number, dt: number): number {
+  if (contact <= 0 || flight <= 0) return 0;
+  return (flight / contact) * (dt / flight + dt / contact);
+}
+
+/** Averaging n independent measurements shrinks random error by √n. */
+function meanErr(err: number, n: number): number {
+  return n > 0 ? err / Math.sqrt(n) : err;
+}
+
+export interface ContactJumpErrors {
+  penultimateSec?: number;
+  contactMs: number;
+  airtime: number;
+  jumpIn: number;
+}
+
+export function contactJumpErrors(m: ContactJumpMetrics, fps: number): ContactJumpErrors {
+  const dt = frameSeconds(fps);
+  return {
+    penultimateSec: m.penultimateSec !== undefined ? dt : undefined,
+    contactMs: dt * 1000,
+    airtime: dt,
+    jumpIn: heightErrInches(m.airtime, dt),
+  };
+}
+
+/** ± on the best-N average: each top jump's bound, averaged, over √N. */
+export function rsiBestAvgErr(jumps: RsiJump[], topIds: Set<number>, fps: number): number {
+  const dt = frameSeconds(fps);
+  const top = jumps.filter((j) => topIds.has(j.index));
+  if (!top.length) return 0;
+  const avg = top.reduce((s, j) => s + rsiErr(j.contact, j.flight, dt), 0) / top.length;
+  return meanErr(avg, top.length);
+}
+
+/** Decimals that keep one or two significant digits of the error. */
+export function decimalsFor(err: number): number {
+  if (!isFinite(err) || err <= 0) return 2;
+  return Math.max(0, Math.min(3, 1 - Math.floor(Math.log10(err))));
+}
+
+/** Round a value and its error to the same, honest number of decimals. */
+export function withError(value: number, err: number) {
+  const d = decimalsFor(err);
+  return { value: value.toFixed(d), err: err.toFixed(d) };
+}
+
+export type RangeFit = "in" | "out" | "unclear";
+
+/** Whether value ± err sits inside [min, max], outside it, or straddles an edge. */
+export function rangeFit(value: number, err: number, min: number, max: number): RangeFit {
+  if (value - err >= min && value + err <= max) return "in";
+  if (value + err < min || value - err > max) return "out";
+  return "unclear";
+}
+
 /* ---------- Summary: the one-line result stored with each clip ---------- */
 
 export type HeightUnit = "in" | "cm";
@@ -83,6 +162,8 @@ export interface ClipStat {
   /** Raw value; `kind` decides how it's formatted. */
   value: number;
   kind: "height" | "ms" | "s" | "rsi" | "count";
+  /** ± error from frame quantization, in the same units as `value`. */
+  err?: number;
 }
 
 export interface ClipSummary {
@@ -94,7 +175,16 @@ export interface ClipSummary {
   stats: ClipStat[];
 }
 
-export function summarize(mode: string, times: number[]): ClipSummary | null {
+/**
+ * Build the one-line result for a clip. Pass `fps` to attach ± error bars to
+ * each stat (left out when saving, since they can be recomputed from fps).
+ */
+export function summarize(
+  mode: string,
+  times: number[],
+  fps?: number,
+): ClipSummary | null {
+  const dt = fps ? frameSeconds(fps) : undefined;
   if (mode === "approach-jump" || mode === "depth-jump") {
     const m = mode === "approach-jump" ? approachMetrics(times) : depthMetrics(times);
     if (!m) return null;
@@ -103,10 +193,10 @@ export function summarize(mode: string, times: number[]): ClipSummary | null {
       kind: "height",
       sub: `GCT ${Math.round(m.contactMs)} ms`,
       stats: [
-        { label: "Ground contact", value: m.contactMs, kind: "ms" },
-        { label: "Airtime", value: m.airtime, kind: "s" },
+        { label: "Ground contact", value: m.contactMs, kind: "ms", err: dt && dt * 1000 },
+        { label: "Airtime", value: m.airtime, kind: "s", err: dt },
         ...(m.penultimateSec !== undefined
-          ? [{ label: "Penultimate step", value: m.penultimateSec, kind: "s" as const }]
+          ? [{ label: "Penultimate step", value: m.penultimateSec, kind: "s" as const, err: dt }]
           : []),
       ],
     };
@@ -122,8 +212,13 @@ export function summarize(mode: string, times: number[]): ClipSummary | null {
       kind: "rsi",
       sub: `Best ${Math.min(RSI_TOP_N, jumps.length)} of ${jumps.length}`,
       stats: [
-        { label: "Avg contact", value: avgContact * 1000, kind: "ms" },
-        { label: "Avg flight", value: avgFlight, kind: "s" },
+        {
+          label: "Avg contact",
+          value: avgContact * 1000,
+          kind: "ms",
+          err: dt && meanErr(dt * 1000, jumps.length),
+        },
+        { label: "Avg flight", value: avgFlight, kind: "s", err: dt && meanErr(dt, jumps.length) },
       ],
     };
   }
@@ -143,7 +238,18 @@ export function formatHeadline(s: ClipSummary, unit: HeightUnit) {
     : { value: s.value.toFixed(2), unit: "RSI" };
 }
 
-export function formatStat(stat: ClipStat, unit: HeightUnit): string {
+export function formatStat(
+  stat: ClipStat,
+  unit: HeightUnit,
+  showErr = false,
+): string {
+  if (showErr && stat.err !== undefined) {
+    const scale = stat.kind === "height" && unit === "cm" ? 2.54 : 1;
+    const v = withError(stat.value * scale, stat.err * scale);
+    const suffix =
+      stat.kind === "ms" ? " ms" : stat.kind === "s" ? " s" : stat.kind === "height" ? ` ${unit}` : "";
+    return `${v.value} ± ${v.err}${suffix}`;
+  }
   switch (stat.kind) {
     case "ms":
       return `${Math.round(stat.value)} ms`;

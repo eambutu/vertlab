@@ -39,7 +39,7 @@ import {
 } from "./ui/dropdown-menu";
 import { ShareClipDrawer } from "./share/share-drawers";
 import { DeleteClipDialog } from "./library/delete-clip-dialog";
-import { store } from "../lib/store";
+import { store, useShowErrors } from "../lib/store";
 import type { Clip } from "../lib/store";
 import { summarize } from "../lib/metrics";
 import { whenRecorded } from "../lib/format";
@@ -90,6 +90,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
     clip.keyframes.length || clip.summary ? clip.mode : loadStoredMode(),
   );
   const [fps, setFps] = useState(clip.fps ?? 30);
+  const showErrors = useShowErrors();
   const [detecting, setDetecting] = useState(true);
   const [aspect, setAspect] = useState(
     clip.width && clip.height ? clip.width / clip.height : 16 / 9,
@@ -535,6 +536,13 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
                   ? "detecting…"
                   : `${(1000 / fps).toFixed(1)} ms/frame`}
               </p>
+              {showErrors && !detecting && (
+                <p className="text-xs text-muted-foreground">
+                  Times can be off by ±1 frame (±{(1000 / fps).toFixed(1)} ms).
+                  {analysisMode === "approach-jump" && fps < 120 &&
+                    " Use 120 fps or higher to judge the penultimate step."}
+                </p>
+              )}
             </div>
           </PopoverContent>
         </Popover>
@@ -592,7 +600,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
           return (
             <section className="space-y-3">
               <h2>{mode.label}</h2>
-              <Panel keyframes={keyframes} />
+              <Panel keyframes={keyframes} fps={fps} />
             </section>
           );
         })()}

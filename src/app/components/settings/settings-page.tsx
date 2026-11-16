@@ -4,6 +4,7 @@ import { signOut, useAuth } from "../../lib/auth";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import {
   BackHeader,
   ClipThumb,
@@ -18,11 +19,13 @@ import { formatHeadline } from "../../lib/metrics";
 import type { HeightUnit } from "../../lib/metrics";
 import {
   displayUrl,
+  setShowErrors,
   setUnit,
   shareUrl,
   store,
   useClips,
   useShares,
+  useShowErrors,
   useUnit,
 } from "../../lib/store";
 import type { Clip, Share } from "../../lib/store";
@@ -30,6 +33,7 @@ import type { Clip, Share } from "../../lib/store";
 export function SettingsPage() {
   const shares = useShares();
   const unit = useUnit();
+  const showErrors = useShowErrors();
   const auth = useAuth();
   const navigate = useNavigate();
 
@@ -100,6 +104,28 @@ export function SettingsPage() {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
+        </section>
+
+        <section className="flex flex-col gap-1.5">
+          <SectionLabel>Results</SectionLabel>
+          <ListCard>
+            <label
+              htmlFor="show-errors"
+              className="flex min-h-14 cursor-pointer items-center gap-3 py-2.5 pl-3.5 pr-3"
+            >
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-[15px]">Show error ranges</span>
+                <span className="text-xs text-muted-foreground">
+                  Adds ± to each result, based on the video's frame rate.
+                </span>
+              </span>
+              <Switch
+                id="show-errors"
+                checked={showErrors}
+                onCheckedChange={setShowErrors}
+              />
+            </label>
+          </ListCard>
         </section>
       </div>
     </Page>

@@ -96,6 +96,40 @@ export function useUnit(): HeightUnit {
   );
 }
 
+/* ---------- Error ranges setting (per device) ---------- */
+
+const ERRORS_KEY = "vertlab.showErrors";
+const errorListeners = new Set<() => void>();
+
+function readShowErrors(): boolean {
+  try {
+    return localStorage.getItem(ERRORS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setShowErrors(show: boolean) {
+  try {
+    localStorage.setItem(ERRORS_KEY, show ? "1" : "0");
+  } catch {
+    /* localStorage unavailable */
+  }
+  errorListeners.forEach((l) => l());
+}
+
+/** Whether results show ± ranges from the video's frame rate. */
+export function useShowErrors(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      errorListeners.add(l);
+      return () => errorListeners.delete(l);
+    },
+    readShowErrors,
+    () => false,
+  );
+}
+
 /* ---------- Share URLs ---------- */
 
 export function shareUrl(share: Pick<Share, "kind" | "token">): string {
