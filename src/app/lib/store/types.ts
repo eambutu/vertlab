@@ -82,6 +82,13 @@ export interface ClipStore {
   createClip(file: File): Promise<Clip>;
   updateClip(id: string, patch: ClipPatch): Promise<void>;
   deleteClip(id: string): Promise<void>;
+  /**
+   * Re-sends a clip's video after a failed upload, using `file` or the copy
+   * this device still holds. False when there's no copy and no `file`.
+   */
+  retryUpload(id: string, file?: File): Promise<boolean>;
+  /** Whether this device still holds the clip's video (sync, so a file picker can open on tap). */
+  hasLocalVideo(id: string): boolean;
   /** A URL the analyzer can play. Caller revokes it when done if it's a blob: URL. */
   getVideoUrl(id: string): Promise<string | undefined>;
 

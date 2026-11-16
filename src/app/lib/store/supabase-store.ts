@@ -1,6 +1,7 @@
 // Supabase implementation of ClipStore. Schema, RLS and the share-view
 // function live in supabase/; see plans/2-clip-library-and-sharing.md.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { toast } from "sonner";
 import type { ClipSummary } from "../metrics";
 import type {
   Clip,
@@ -13,6 +14,14 @@ import { localDay } from "./local-store";
 
 const BUCKET = "clips";
 const SIGNED_URL_SECONDS = 60 * 60;
+/**
+ * Must match the bucket's file_size_limit (supabase/migrations/…_clips_and_shares.sql)
+ * and stay under the project's global upload limit (50 MB on the Free plan).
+ */
+const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+
+const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const log = (...args: unknown[]) => console.info("[vertlab upload]", ...args);
 
 interface ClipRow {
   id: string;
@@ -158,20 +167,62 @@ export class SupabaseClipStore implements ClipStore {
     return this.toClip(row);
   }
 
+  hasLocalVideo(clipId: string) {
+    return this.localVideos.has(clipId);
+  }
+
+  async retryUpload(clipId: string, file?: File) {
+    const userId = await this.session;
+    const video = file ?? this.localVideos.get(clipId);
+    if (!video) return false;
+    if (this.uploading.has(clipId)) return true;
+    log("retry", { clipId, fromPicker: !!file });
+    this.localVideos.set(clipId, video);
+    this.uploading.add(clipId);
+    this.emit();
+    void this.upload(userId, clipId, video);
+    return true;
+  }
+
   private async upload(userId: string, clipId: string, file: File) {
     const path = `${userId}/${clipId}/video.${extOf(file)}`;
+    const started = performance.now();
+    const info = { clipId, path, name: file.name, type: file.type, size: mb(file.size) };
+    log("start", info);
     try {
+      if (file.size > MAX_UPLOAD_BYTES) {
+        throw new Error(
+          `File is ${mb(file.size)}; the upload limit is ${mb(MAX_UPLOAD_BYTES)}`,
+        );
+      }
       const { error } = await this.sb.storage
         .from(BUCKET)
         .upload(path, file, { contentType: file.type || "video/mp4", upsert: true });
       if (error) throw error;
+      log("stored", { clipId, seconds: ((performance.now() - started) / 1000).toFixed(1) });
       const { error: updateError } = await this.sb
         .from("clips")
         .update({ video_path: path })
         .eq("id", clipId);
       if (updateError) throw updateError;
+      log("done", { clipId });
     } catch (e) {
-      console.error("Video upload failed", e);
+      // StorageApiError carries the HTTP status (413 = too large, 403 = policy).
+      const err = e as { message?: string; status?: number; statusCode?: string };
+      console.error("[vertlab upload] failed", {
+        ...info,
+        seconds: ((performance.now() - started) / 1000).toFixed(1),
+        status: err.status ?? err.statusCode,
+        message: err.message,
+        error: e,
+      });
+      toast.error("Video didn't upload", {
+        description:
+          file.size > MAX_UPLOAD_BYTES
+            ? `It's ${mb(file.size)}; videos can be up to ${mb(MAX_UPLOAD_BYTES)}. Trim it and retry from the ••• menu.`
+            : `${err.message ?? "Check your connection."} Retry from the ••• menu.`,
+        duration: 10_000,
+      });
     } finally {
       this.uploading.delete(clipId);
       this.emit();

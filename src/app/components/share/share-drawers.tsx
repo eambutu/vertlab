@@ -177,8 +177,14 @@ export function ShareDayDrawer({
               </DrawerDescription>
             </DrawerHeader>
 
-            <fieldset className="min-h-0 overflow-y-auto rounded-[14px] border border-black/10">
-              <legend className="sr-only">Jumps to include</legend>
+            {/* A div, not a fieldset: fieldsets don't reliably shrink and clip
+                inside a flex column, so the list spilled over the footer. */}
+            <div
+              role="group"
+              aria-label="Jumps to include"
+              data-vaul-no-drag
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-[14px] border border-black/10"
+            >
               <div className="divide-y divide-black/[0.07]">
                 {ordered.map((c) => {
                   const on = included.includes(c.id);
@@ -206,26 +212,28 @@ export function ShareDayDrawer({
                   );
                 })}
               </div>
-            </fieldset>
+            </div>
 
-            <LinkField
-              url={share ? shareUrl(share) : undefined}
-              label="Copy link"
-              showGlobe
-              className="border-0 bg-zinc-100"
-            />
-            <p className="-mt-1.5 text-xs text-muted-foreground">
-              {included.length} of {ordered.length} jumps · anyone with the link
-              can watch
-            </p>
+            <div className="flex shrink-0 flex-col gap-3.5">
+              <LinkField
+                url={share ? shareUrl(share) : undefined}
+                label="Copy link"
+                showGlobe
+                className="border-0 bg-zinc-100"
+              />
+              <p className="-mt-1.5 text-xs text-muted-foreground">
+                {included.length} of {ordered.length} jumps · anyone with the link
+                can watch
+              </p>
 
-            <StopSharingButton
-              onClick={async () => {
-                if (share) await store.stopSharing(share.id);
-                onOpenChange(false);
-                toast("Link stopped");
-              }}
-            />
+              <StopSharingButton
+                onClick={async () => {
+                  if (share) await store.stopSharing(share.id);
+                  onOpenChange(false);
+                  toast("Link stopped");
+                }}
+              />
+            </div>
           </div>
         )}
       </DrawerContent>

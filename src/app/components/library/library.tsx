@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import {
   MoreHorizontal,
   Plus,
+  RotateCw,
   Settings,
   Share,
   Star,
@@ -68,6 +69,8 @@ function noteMenu(open: boolean) {
   if (!open) lastMenuClose = performance.now();
 }
 function swallowGhostClick(e: MouseEvent) {
+  // Never the file picker a menu item opened on purpose.
+  if (e.target instanceof HTMLInputElement && e.target.type === "file") return;
   if (performance.now() - lastMenuClose < 450) {
     e.preventDefault();
     e.stopPropagation();
@@ -126,8 +129,35 @@ function ClipRow({
   onDelete: () => void;
 }) {
   const unit = useUnit();
+  const picker = useRef<HTMLInputElement>(null);
+  const failed = clip.videoStatus === "failed";
+
+  async function retry(file?: File) {
+    try {
+      if (!(await store.retryUpload(clip.id, file))) picker.current?.click();
+    } catch (e) {
+      console.error("[vertlab upload] retry failed to start", e);
+      toast.error("Couldn't retry the upload", {
+        description: "Check your connection and try again.",
+      });
+    }
+  }
+
   return (
     <div className="flex items-center gap-1.5 pr-1.5 has-[[data-state=open]]:bg-zinc-50">
+      {failed && (
+        <input
+          ref={picker}
+          type="file"
+          accept="video/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) retry(f);
+          }}
+        />
+      )}
       <Link
         to={`/clip/${clip.id}`}
         className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 outline-none focus-visible:bg-zinc-50"
@@ -149,6 +179,22 @@ function ClipRow({
           <MoreHorizontal className="size-[18px]" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48 rounded-xl p-1.5">
+          {failed && (
+            <>
+              <DropdownMenuItem
+                className="h-11 rounded-lg px-2.5 text-sm font-medium"
+                onSelect={() =>
+                  // Open the picker inside the tap when there's no copy here;
+                  // phones block file pickers opened later.
+                  store.hasLocalVideo(clip.id) ? retry() : picker.current?.click()
+                }
+              >
+                <RotateCw className="size-[17px]" />
+                {store.hasLocalVideo(clip.id) ? "Retry upload" : "Re-add video…"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="mx-1.5" />
+            </>
+          )}
           <DropdownMenuItem
             className="h-11 rounded-lg px-2.5 text-sm font-medium"
             onSelect={() => store.updateClip(clip.id, { starred: !clip.starred })}

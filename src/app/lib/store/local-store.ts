@@ -113,6 +113,15 @@ export class LocalClipStore implements ClipStore {
     return clip;
   }
 
+  /** Videos are saved with the clip here, so there's never anything to resend. */
+  async retryUpload() {
+    return true;
+  }
+
+  hasLocalVideo() {
+    return true;
+  }
+
   async updateClip(id: string, patch: ClipPatch) {
     const db = await this.db();
     const tx = db.transaction("clips", "readwrite");
