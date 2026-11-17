@@ -20,7 +20,8 @@ import {
 } from "../ui/table";
 
 interface DepthJumpPanelProps {
-  keyframes: Keyframe[];
+  /** Only the times are used, so the shared viewer can pass plain times. */
+  keyframes: Pick<Keyframe, "time">[];
   fps: number;
   /** Reps in the video; each one is contact, takeoff, landing. */
   reps: number;

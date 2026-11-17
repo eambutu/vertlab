@@ -3,13 +3,8 @@ import { Link, useNavigate } from "react-router";
 import {
   Camera,
   ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   Loader2,
-  Pause,
   MoreHorizontal,
-  Play,
   Settings,
   Share,
   Star,
@@ -18,7 +13,6 @@ import {
 import { toast } from "sonner";
 import { Button, buttonVariants } from "./ui/button";
 import { Input } from "./ui/input";
-import { Slider } from "./ui/slider";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { cn } from "./ui/utils";
 import {
@@ -31,6 +25,8 @@ import {
 import { KeyframeStrip } from "./keyframe-strip";
 import { DiffPanel } from "./diff-panel";
 import { MODES } from "./modes";
+import { ModeResults } from "./modes/mode-results";
+import { PlayerControls } from "./player-controls";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -84,7 +80,7 @@ function loadStoredMode(): string {
   }
   return COMPARE_MODE;
 }
-import { formatTimecode, preciseMs, detectFps } from "../lib/video-utils";
+import { detectFps } from "../lib/video-utils";
 import type { Keyframe } from "./types";
 
 interface AnalyzerProps {
@@ -488,78 +484,19 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
         )}
       </div>
 
-      {/* Time readout */}
-      <div className="flex items-baseline justify-between rounded-xl bg-card border border-border px-4 py-3">
-        <span className="font-mono text-xl tabular-nums">
-          {formatTimecode(current)}
-        </span>
-        <span className="font-mono text-sm text-muted-foreground tabular-nums">
-          {preciseMs(current)} ms / {formatTimecode(duration)}
-        </span>
-      </div>
-
-      {/* Scrubber */}
-      <Slider
-        value={[current]}
-        min={0}
-        max={duration || 0}
-        step={0.001}
-        onValueChange={([v]) => seekTo(v)}
-      />
-
-      {/* Transport */}
-      <div className="relative flex items-center justify-center gap-2">
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => stepFrame(-5)}
-          title="Back 5 frames"
-        >
-          <ChevronsLeft className="size-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => stepFrame(-1)}
-          title={`Previous frame (1/${fps}s)`}
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-        <Button size="lg" onClick={togglePlay} className="px-6">
-          {playing ? (
-            <>
-              <Pause className="size-4" /> Pause
-            </>
-          ) : (
-            <>
-              <Play className="size-4" /> Play
-            </>
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => stepFrame(1)}
-          title={`Next frame (1/${fps}s)`}
-        >
-          <ChevronRight className="size-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => stepFrame(5)}
-          title="Forward 5 frames"
-        >
-          <ChevronsRight className="size-4" />
-        </Button>
-
-        {/* Frame rate settings */}
+      <PlayerControls
+        current={current}
+        duration={duration}
+        playing={playing}
+        fps={fps}
+        onSeek={seekTo}
+        onStep={stepFrame}
+        onTogglePlay={togglePlay}
+        extra={
+        // Frame rate settings
         <Popover>
           <PopoverTrigger
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "icon" }),
-              "absolute right-0",
-            )}
+            className={buttonVariants({ variant: "ghost", size: "icon" })}
             title="Frame rate"
           >
             <Settings className="size-4" />
@@ -609,7 +546,8 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
             </div>
           </PopoverContent>
         </Popover>
-      </div>
+        }
+      />
 
       {/* Capture action */}
       <Button
@@ -704,19 +642,10 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
         />
       </section>
 
-      {/* Mode panel (Approach jump, etc.) */}
-      {!isCompareLike(analysisMode) &&
-        (() => {
-          const mode = MODES.find((m) => m.id === analysisMode);
-          if (!mode) return null;
-          const { Panel } = mode;
-          return (
-            <section className="space-y-3">
-              <h2>{mode.label}</h2>
-              <Panel keyframes={keyframes} fps={fps} reps={depthReps} />
-            </section>
-          );
-        })()}
+      {/* Mode results (Approach jump, etc.) — the share viewer shows the same. */}
+      {!isCompareLike(analysisMode) && (
+        <ModeResults mode={fullMode} times={keyframes.map((k) => k.time)} fps={fps} />
+      )}
 
       {/* Comparison */}
       {isCompareLike(analysisMode) && selectedFrames.length === 2 && (

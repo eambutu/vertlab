@@ -9,11 +9,15 @@ import {
   ContextMenuTrigger,
 } from "./ui/context-menu";
 
+/** What the strip draws; a thumbnail may still be loading. */
+type StripFrame = Pick<Keyframe, "id" | "time"> & { thumbUrl?: string };
+
 interface KeyframeStripProps {
-  keyframes: Keyframe[];
+  keyframes: StripFrame[];
   selected: string[];
   onSelect: (id: string) => void;
-  onRemove: (id: string) => void;
+  /** Leave out for a read-only strip (the share viewer): no remove controls. */
+  onRemove?: (id: string) => void;
   /** Optional per-keyframe labels (by id) shown under the timecode. */
   labels?: Record<string, string>;
   /** When false, frames can't be clicked to select (e.g. outside compare mode). */
@@ -34,6 +38,8 @@ export function KeyframeStrip({
   // toggle selection or land on the item underneath the menu.
   const menuClosedAt = useRef(0);
   const menuJustUsed = () => performance.now() - menuClosedAt.current < 450;
+
+  const readOnly = !onRemove;
 
   if (keyframes.length === 0) {
     return (
@@ -76,29 +82,33 @@ export function KeyframeStrip({
                       : undefined
                   }
                 >
-                  <img
-                    src={kf.thumbUrl}
-                    alt={`Keyframe at ${formatTimecode(kf.time)}`}
-                    draggable={false}
-                    className="pointer-events-none h-24 w-full bg-black object-contain"
-                  />
+                  {kf.thumbUrl ? (
+                    <img
+                      src={kf.thumbUrl}
+                      alt={`Keyframe at ${formatTimecode(kf.time)}`}
+                      draggable={false}
+                      className="pointer-events-none h-24 w-full bg-black object-contain"
+                    />
+                  ) : (
+                    <div className="h-24 w-full animate-pulse bg-zinc-800" />
+                  )}
                   {isSelected && (
                     <span className="absolute left-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
                       {selIndex + 1}
                     </span>
                   )}
                   {/* Quick remove for mouse users; touch uses the long-press menu. */}
-                  <button
+                  {!readOnly && <button
                     type="button"
                     aria-label={`Remove keyframe at ${formatTimecode(kf.time)}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onRemove(kf.id);
+                      onRemove?.(kf.id);
                     }}
                     className="absolute right-1.5 top-1.5 hidden size-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:hover)]:flex"
                   >
                     <X className="size-3" />
-                  </button>
+                  </button>}
                   <div className="bg-card px-2 py-1.5">
                     <p className="font-mono text-sm tabular-nums">
                       {formatTimecode(kf.time)}
@@ -114,23 +124,25 @@ export function KeyframeStrip({
                   </div>
                 </div>
               </ContextMenuTrigger>
-              <ContextMenuContent className="w-48 rounded-xl p-1.5">
+              {!readOnly && <ContextMenuContent className="w-48 rounded-xl p-1.5">
                 <ContextMenuItem
                   variant="destructive"
                   className={MENU_ITEM}
-                  onSelect={() => onRemove(kf.id)}
+                  onSelect={() => onRemove?.(kf.id)}
                 >
                   <Trash2 className="size-[17px]" />
                   Remove keyframe
                 </ContextMenuItem>
-              </ContextMenuContent>
+              </ContextMenuContent>}
             </ContextMenu>
           );
         })}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Press and hold a keyframe (or right-click) to remove it.
-      </p>
+      {!readOnly && (
+        <p className="text-xs text-muted-foreground">
+          Press and hold a keyframe (or right-click) to remove it.
+        </p>
+      )}
     </div>
   );
 }
