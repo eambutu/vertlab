@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   Camera,
@@ -51,6 +51,16 @@ import {
   summarize,
 } from "../lib/metrics";
 import { whenRecorded } from "../lib/format";
+import {
+  SUGGEST_MODES,
+  useSuggestKeyframes,
+} from "../features/keyframe-suggest/flag";
+import type { CaptureHook } from "../features/keyframe-suggest/suggest-keyframes";
+
+// Labs: suggested keyframes, only downloaded when the setting is on.
+const SuggestKeyframes = lazy(
+  () => import("../features/keyframe-suggest/suggest-keyframes"),
+);
 
 // The analysis selector combines the built-in two-frame compare with the modes.
 const COMPARE_MODE = "compare";
@@ -125,6 +135,9 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   const posterRef = useRef<string | undefined>(clip.poster);
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const suggestOn = useSuggestKeyframes();
+  /** Lets "Find keyframes" claim the next hand capture while picking by hand. */
+  const captureHook: CaptureHook = useRef(null);
 
   // Remember the chosen analysis mode across uploads.
   useEffect(() => {
@@ -212,17 +225,37 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
     return c.toDataURL("image/jpeg", 0.75);
   }, []);
 
+  /** Keyframes (thumbnail + diff data) for the given times. */
+  const framesAt = useCallback(
+    async (times: number[]) => {
+      videoRef.current?.pause();
+      const frames: Keyframe[] = [];
+      for (const t of times) {
+        await seekAndWait(t);
+        const kf = grabFrame();
+        if (kf) frames.push({ ...kf, time: t });
+      }
+      return frames;
+    },
+    [seekAndWait, grabFrame],
+  );
+
+  /** Replaces the keyframes with these times (from "Find keyframes"). */
+  const applyKeyframeTimes = useCallback(
+    async (times: number[]) => {
+      const frames = await framesAt(times);
+      setSelected([]);
+      setKeyframes(frames.sort((a, b) => a.time - b.time));
+      if (frames.length) await seekAndWait(frames[0].time);
+    },
+    [framesAt, seekAndWait],
+  );
+
   /** After the video is ready: redraw saved keyframes and make a poster. */
   const restore = useCallback(async () => {
     const v = videoRef.current;
     if (!v) return;
-    v.pause();
-    const frames: Keyframe[] = [];
-    for (const t of clip.keyframes) {
-      await seekAndWait(t);
-      const kf = grabFrame();
-      if (kf) frames.push({ ...kf, time: t });
-    }
+    const frames = await framesAt(clip.keyframes);
     if (!posterRef.current) {
       await seekAndWait(0);
       posterRef.current = grabPoster();
@@ -230,7 +263,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
     await seekAndWait(0);
     setKeyframes(frames);
     setRestored(true);
-  }, [clip.keyframes, seekAndWait, grabFrame, grabPoster]);
+  }, [clip.keyframes, framesAt, seekAndWait, grabPoster]);
 
   // Autosave keyframes, mode and result as you work. Every clip is stored.
   useEffect(() => {
@@ -255,6 +288,8 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   }, [restored, keyframes, fullMode, fps, clip.id]);
 
   const captureCurrent = useCallback(() => {
+    const v = videoRef.current;
+    if (v && captureHook.current?.(v.currentTime)) return;
     const kf = grabFrame();
     if (!kf) return;
     // Same frame twice would skew every mode's maths; keep one.
@@ -583,6 +618,20 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
       >
         <Camera className="size-4" /> Capture this frame
       </Button>
+
+      {suggestOn && SUGGEST_MODES.includes(analysisMode) && !detecting && (
+        <Suspense fallback={null}>
+          <SuggestKeyframes
+            videoUrl={url}
+            mode={analysisMode}
+            fps={fps}
+            keyframeCount={keyframes.length}
+            seekTo={seekTo}
+            captureHook={captureHook}
+            onApply={applyKeyframeTimes}
+          />
+        </Suspense>
+      )}
 
       {/* Keyframes */}
       <section className="space-y-3">

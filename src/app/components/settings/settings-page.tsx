@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+import { SuggestKeyframesSetting } from "../../features/keyframe-suggest/flag";
 import {
   BackHeader,
   ClipThumb,
@@ -126,6 +127,16 @@ export function SettingsPage() {
               />
             </label>
           </ListCard>
+        </section>
+
+        <section className="flex flex-col gap-1.5">
+          <SectionLabel>Labs</SectionLabel>
+          <ListCard>
+            <SuggestKeyframesSetting />
+          </ListCard>
+          <p className="px-1 text-xs text-muted-foreground">
+            Experiments that may change or go away.
+          </p>
         </section>
       </div>
     </Page>

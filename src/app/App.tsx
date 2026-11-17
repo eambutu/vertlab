@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { Toaster } from "./components/ui/sonner";
 import { Library } from "./components/library/library";
@@ -8,6 +9,11 @@ import {
 } from "./components/settings/settings-page";
 import { SharedPage } from "./components/viewer/shared-page";
 import { RequireAuth } from "./components/auth/require-auth";
+
+// Labs: suggested-keyframes accuracy test (only loaded when visited).
+const KeyframeAccuracyPage = lazy(
+  () => import("./features/keyframe-suggest/accuracy-page"),
+);
 
 export default function App() {
   return (
@@ -24,6 +30,16 @@ export default function App() {
           <Route path="/j/:token" element={<SharedPage kind="clip" />} />
           <Route path="/d/:token" element={<SharedPage kind="day" />} />
           <Route path="/d/:token/:n" element={<SharedPage kind="day" />} />
+          <Route
+            path="/labs/keyframe-accuracy"
+            element={
+              <RequireAuth>
+                <Suspense fallback={null}>
+                  <KeyframeAccuracyPage />
+                </Suspense>
+              </RequireAuth>
+            }
+          />
           <Route path="*" element={<RequireAuth><Library /></RequireAuth>} />
         </Routes>
       </div>
