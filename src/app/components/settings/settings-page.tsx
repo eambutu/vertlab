@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { ChevronRight, Link2, Link2Off, Copy, LogOut } from "lucide-react";
+import { ChevronRight, Link2, Link2Off, Copy, HardDrive, LogOut } from "lucide-react";
 import { signOut, useAuth } from "../../lib/auth";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
@@ -15,7 +15,7 @@ import {
   modeLabel,
 } from "../library/parts";
 import { copyLink } from "../share/link-field";
-import { dayShort, plural, sharedWhen, whenRecorded } from "../../lib/format";
+import { dayShort, fileSize, plural, sharedWhen, whenRecorded } from "../../lib/format";
 import { formatHeadline } from "../../lib/metrics";
 import type { HeightUnit } from "../../lib/metrics";
 import {
@@ -27,12 +27,14 @@ import {
   useClips,
   useShares,
   useShowErrors,
+  useStorageUsage,
   useUnit,
 } from "../../lib/store";
 import type { Clip, Share } from "../../lib/store";
 
 export function SettingsPage() {
   const shares = useShares();
+  const usage = useStorageUsage();
   const unit = useUnit();
   const showErrors = useShowErrors();
   const auth = useAuth();
@@ -80,6 +82,23 @@ export function SettingsPage() {
             </ListCard>
           </section>
         )}
+
+        <section className="flex flex-col gap-1.5">
+          <SectionLabel>Storage</SectionLabel>
+          <ListCard>
+            <div className="flex min-h-14 items-center gap-3 pl-3.5 pr-3">
+              <HardDrive className="size-[18px] text-zinc-700" />
+              <span className="flex-1 text-[15px]">Videos stored</span>
+              <span className="font-mono text-[13px] text-muted-foreground tabular-nums">
+                {usage === undefined
+                  ? "…"
+                  : usage
+                    ? `${fileSize(usage.bytes)} · ${plural(usage.videos, "video")}`
+                    : "—"}
+              </span>
+            </div>
+          </ListCard>
+        </section>
 
         <section className="flex flex-col gap-1.5">
           <SectionLabel>Units</SectionLabel>

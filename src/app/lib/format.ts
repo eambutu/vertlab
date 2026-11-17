@@ -50,3 +50,10 @@ export function shortDuration(seconds?: number): string | undefined {
 export function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
+
+/** "0 MB", "84.2 MB", "1.27 GB" (decimal units, as storage plans use). */
+export function fileSize(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+  const mb = bytes / 1e6;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}

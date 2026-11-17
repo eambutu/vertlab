@@ -9,6 +9,7 @@ import type {
   ClipStore,
   Share,
   SharedView,
+  StorageUsage,
 } from "./types";
 import { localDay } from "./local-store";
 
@@ -165,6 +166,18 @@ export class SupabaseClipStore implements ClipStore {
     this.upload(userId, row.id, file);
     this.emit();
     return this.toClip(row);
+  }
+
+  async storageUsage(): Promise<StorageUsage | null> {
+    await this.session;
+    const { data, error } = await this.sb.rpc("storage_usage");
+    if (error) {
+      // e.g. the storage_usage migration isn't applied yet; Settings shows "—".
+      console.warn("[vertlab] storage usage unavailable", error);
+      return null;
+    }
+    const row = (data as { bytes: number | string; videos: number | string }[])[0];
+    return { bytes: Number(row?.bytes ?? 0), videos: Number(row?.videos ?? 0) };
   }
 
   hasLocalVideo(clipId: string) {

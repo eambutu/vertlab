@@ -4,7 +4,7 @@ import type { HeightUnit } from "../metrics";
 import { LocalClipStore } from "./local-store";
 import { SupabaseClipStore } from "./supabase-store";
 import { supabase, SUPABASE_ANON_KEY, SUPABASE_URL } from "../supabase";
-import type { Clip, ClipStore, Share } from "./types";
+import type { Clip, ClipStore, Share, StorageUsage } from "./types";
 
 export type * from "./types";
 export { localDay } from "./local-store";
@@ -57,6 +57,11 @@ export function useClip(id: string | undefined) {
     () => (id ? store.getClip(id) : Promise.resolve(undefined)),
     [id],
   );
+}
+
+/** Reloads with the library, so adding or deleting a clip updates it. */
+export function useStorageUsage(): StorageUsage | null | undefined {
+  return useStoreQuery(() => store.storageUsage(), []);
 }
 
 export function useShares(): Share[] | undefined {

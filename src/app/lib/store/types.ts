@@ -40,6 +40,11 @@ export type ClipPatch = Partial<
   >
 >;
 
+export interface StorageUsage {
+  bytes: number;
+  videos: number;
+}
+
 export interface Share {
   id: string;
   token: string;
@@ -89,6 +94,8 @@ export interface ClipStore {
   retryUpload(id: string, file?: File): Promise<boolean>;
   /** Whether this device still holds the clip's video (sync, so a file picker can open on tap). */
   hasLocalVideo(id: string): boolean;
+  /** Space the account's videos take up, and how many. Null if it can't be read. */
+  storageUsage(): Promise<StorageUsage | null>;
   /** A URL the analyzer can play. Caller revokes it when done if it's a blob: URL. */
   getVideoUrl(id: string): Promise<string | undefined>;
 

@@ -118,6 +118,14 @@ export class LocalClipStore implements ClipStore {
     return true;
   }
 
+  async storageUsage() {
+    const db = await this.db();
+    const blobs = await reqToPromise<Blob[]>(
+      db.transaction("videos").objectStore("videos").getAll(),
+    );
+    return { bytes: blobs.reduce((s, b) => s + b.size, 0), videos: blobs.length };
+  }
+
   hasLocalVideo() {
     return true;
   }
