@@ -23,6 +23,47 @@ export function approachMetrics(times: number[]): ContactJumpMetrics | null {
   };
 }
 
+/* ---------- Mode strings ----------
+ *
+ * A clip's `mode` is one string so it travels everywhere (library, share
+ * links) unchanged. Options ride after the first colon:
+ *   "custom:Box jump"  a Custom clip labelled "Box jump"
+ *   "depth-jump:3"     a depth jump video with 3 reps
+ */
+
+export const CUSTOM_MODE = "custom";
+export const CUSTOM_LABEL_MAX = 40;
+export const MAX_DEPTH_REPS = 10;
+
+export interface ParsedMode {
+  id: string;
+  /** Custom only: what the clip is, as typed. */
+  label?: string;
+  /** Depth jump only: reps in the video (1 when not set). */
+  reps: number;
+}
+
+export function parseMode(mode: string): ParsedMode {
+  const i = mode.indexOf(":");
+  const id = i < 0 ? mode : mode.slice(0, i);
+  const opt = i < 0 ? "" : mode.slice(i + 1);
+  if (id === CUSTOM_MODE) return { id, label: opt.trim() || undefined, reps: 1 };
+  if (id === "depth-jump") {
+    const n = parseInt(opt, 10);
+    return { id, reps: n >= 1 ? Math.min(n, MAX_DEPTH_REPS) : 1 };
+  }
+  return { id, reps: 1 };
+}
+
+export function composeMode(id: string, opts: { label?: string; reps?: number }): string {
+  if (id === CUSTOM_MODE) {
+    const label = opts.label?.trim().slice(0, CUSTOM_LABEL_MAX);
+    return label ? `${id}:${label}` : id;
+  }
+  if (id === "depth-jump" && opts.reps && opts.reps > 1) return `${id}:${opts.reps}`;
+  return id;
+}
+
 /** Depth jump: [contact, takeoff, landing]. */
 export function depthMetrics(times: number[]): ContactJumpMetrics | null {
   if (times.length < 3) return null;
@@ -33,6 +74,20 @@ export function depthMetrics(times: number[]): ContactJumpMetrics | null {
     airtime,
     jumpIn: jumpHeightInches(airtime),
   };
+}
+
+/** Depth jumps with several reps: every completed [contact, takeoff, landing]. */
+export function depthReps(times: number[], reps: number): ContactJumpMetrics[] {
+  const out: ContactJumpMetrics[] = [];
+  for (let r = 0; r < reps && r * 3 + 2 < times.length; r++) {
+    out.push(depthMetrics(times.slice(r * 3, r * 3 + 3))!);
+  }
+  return out;
+}
+
+/** Index of the highest rep (first one on a tie). */
+export function bestRepIndex(reps: ContactJumpMetrics[]): number {
+  return reps.reduce((best, m, i) => (m.jumpIn > reps[best].jumpIn ? i : best), 0);
 }
 
 export interface RsiJump {
@@ -185,6 +240,32 @@ export function summarize(
   fps?: number,
 ): ClipSummary | null {
   const dt = fps ? frameSeconds(fps) : undefined;
+  const parsed = parseMode(mode);
+  if (parsed.id === "depth-jump" && parsed.reps > 1) {
+    const reps = depthReps(times, parsed.reps);
+    if (!reps.length) return null;
+    const best = reps[bestRepIndex(reps)];
+    const n = reps.length;
+    const avgHeight = reps.reduce((s, m) => s + m.jumpIn, 0) / n;
+    const avgContact = reps.reduce((s, m) => s + m.contactMs, 0) / n;
+    const avgAirtime = reps.reduce((s, m) => s + m.airtime, 0) / n;
+    return {
+      value: best.jumpIn,
+      kind: "height",
+      sub: `Best of ${n} · GCT ${Math.round(best.contactMs)} ms`,
+      stats: [
+        { label: "Best rep contact", value: best.contactMs, kind: "ms", err: dt && dt * 1000 },
+        {
+          label: "Avg height",
+          value: avgHeight,
+          kind: "height",
+          err: dt && meanErr(heightErrInches(avgAirtime, dt), n),
+        },
+        { label: "Avg contact", value: avgContact, kind: "ms", err: dt && meanErr(dt * 1000, n) },
+      ],
+    };
+  }
+  mode = parsed.id;
   if (mode === "approach-jump" || mode === "depth-jump") {
     const m = mode === "approach-jump" ? approachMetrics(times) : depthMetrics(times);
     if (!m) return null;
@@ -271,7 +352,16 @@ export const MODE_LABELS: Record<string, string> = {
   "approach-jump": "Approach",
   "depth-jump": "Depth",
   "ten-five-rsi": "10-5 RSI",
+  [CUSTOM_MODE]: "Custom",
 };
+
+/** What a clip is called in the library and on share pages. */
+export function modeTitle(mode: string): string {
+  const p = parseMode(mode);
+  if (p.id === CUSTOM_MODE) return p.label ?? "Custom";
+  const base = MODE_LABELS[p.id] ?? "Clip";
+  return p.reps > 1 ? `${base} · ${p.reps} reps` : base;
+}
 
 /** Keyframe labels per mode (used by the analyzer strip and the viewer). */
 const APPROACH_LABELS = ["Penultimate", "Contact", "Takeoff", "Landing"];
@@ -284,8 +374,14 @@ function rsiLabel(i: number): string {
 }
 
 export function keyframeLabel(mode: string, i: number): string | undefined {
+  const { id, reps } = parseMode(mode);
+  mode = id;
   if (mode === "approach-jump") return APPROACH_LABELS[i];
-  if (mode === "depth-jump") return DEPTH_LABELS[i];
+  if (mode === "depth-jump") {
+    if (reps === 1) return DEPTH_LABELS[i];
+    if (i >= reps * 3) return undefined;
+    return `Rep ${Math.floor(i / 3) + 1} ${DEPTH_LABELS[i % 3].toLowerCase()}`;
+  }
   if (mode === "ten-five-rsi") return rsiLabel(i);
   return undefined;
 }

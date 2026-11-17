@@ -4,7 +4,7 @@ import { ChevronLeft, Star } from "lucide-react";
 import { cn } from "../ui/utils";
 import { buttonVariants } from "../ui/button";
 import { shortDuration } from "../../lib/format";
-import { formatHeadline, MODE_LABELS } from "../../lib/metrics";
+import { formatHeadline, modeTitle } from "../../lib/metrics";
 import type { HeightUnit } from "../../lib/metrics";
 import type { Clip, SharedClip } from "../../lib/store";
 
@@ -164,8 +164,9 @@ export function Headline({
   );
 }
 
+/** The clip's title: its custom label, or the kind of jump. */
 export function modeLabel(clip: Pick<Clip, "mode">) {
-  return MODE_LABELS[clip.mode] ?? "Clip";
+  return modeTitle(clip.mode);
 }
 
 /** Second line under the mode: the result detail, or what's still missing. */

@@ -41,7 +41,15 @@ import { ShareClipDrawer } from "./share/share-drawers";
 import { DeleteClipDialog } from "./library/delete-clip-dialog";
 import { store, useShowErrors } from "../lib/store";
 import type { Clip } from "../lib/store";
-import { summarize } from "../lib/metrics";
+import {
+  CUSTOM_LABEL_MAX,
+  CUSTOM_MODE,
+  MAX_DEPTH_REPS,
+  composeMode,
+  keyframeLabel,
+  parseMode,
+  summarize,
+} from "../lib/metrics";
 import { whenRecorded } from "../lib/format";
 
 // The analysis selector combines the built-in two-frame compare with the modes.
@@ -49,14 +57,18 @@ const COMPARE_MODE = "compare";
 const ANALYSIS_OPTIONS = [
   { id: COMPARE_MODE, label: "Compare" },
   ...MODES.map((m) => ({ id: m.id, label: m.label })),
+  { id: CUSTOM_MODE, label: "Custom" },
 ];
+
+/** Compare and Custom both work by picking two frames to compare. */
+const isCompareLike = (id: string) => id === COMPARE_MODE || id === CUSTOM_MODE;
 
 const MODE_STORAGE_KEY = "vertlab.analysisMode";
 
 function loadStoredMode(): string {
   try {
     const saved = localStorage.getItem(MODE_STORAGE_KEY);
-    if (saved && ANALYSIS_OPTIONS.some((o) => o.id === saved)) return saved;
+    if (saved && ANALYSIS_OPTIONS.some((o) => o.id === parseMode(saved).id)) return saved;
   } catch {
     /* localStorage unavailable */
   }
@@ -86,9 +98,22 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   const [selected, setSelected] = useState<string[]>([]);
   // A clip that was already worked on reopens in its own mode; a fresh one
   // starts in the last mode you used.
-  const [analysisMode, setAnalysisMode] = useState<string>(() =>
-    clip.keyframes.length || clip.summary ? clip.mode : loadStoredMode(),
+  // The mode string carries options too ("custom:Box jump", "depth-jump:3");
+  // split it so each part has its own control.
+  // A labelled Custom clip counts as worked on even before any keyframes.
+  const [initialMode] = useState(() =>
+    parseMode(
+      clip.keyframes.length || clip.summary || parseMode(clip.mode).label
+        ? clip.mode
+        : loadStoredMode(),
+    ),
   );
+  const [analysisMode, setAnalysisMode] = useState<string>(initialMode.id);
+  // The label lives on the clip, never in the remembered mode, so a fresh
+  // clip doesn't inherit the last one's.
+  const [customLabel, setCustomLabel] = useState(initialMode.label ?? "");
+  const [depthReps, setDepthReps] = useState(initialMode.reps);
+  const fullMode = composeMode(analysisMode, { label: customLabel, reps: depthReps });
   const [fps, setFps] = useState(clip.fps ?? 30);
   const showErrors = useShowErrors();
   const [detecting, setDetecting] = useState(true);
@@ -104,11 +129,14 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   // Remember the chosen analysis mode across uploads.
   useEffect(() => {
     try {
-      localStorage.setItem(MODE_STORAGE_KEY, analysisMode);
+      localStorage.setItem(
+        MODE_STORAGE_KEY,
+        composeMode(analysisMode, { reps: depthReps }),
+      );
     } catch {
       /* localStorage unavailable */
     }
-  }, [analysisMode]);
+  }, [analysisMode, depthReps]);
 
   // Keep the time readout updated continuously while playing.
   useEffect(() => {
@@ -212,9 +240,9 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
       const v = videoRef.current;
       store
         .updateClip(clip.id, {
-          mode: analysisMode,
+          mode: fullMode,
           keyframes: times,
-          summary: summarize(analysisMode, times),
+          summary: summarize(fullMode, times),
           fps,
           duration: v?.duration || undefined,
           width: v?.videoWidth || undefined,
@@ -224,7 +252,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
         .catch(() => toast.error("Couldn't save your changes"));
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [restored, keyframes, analysisMode, fps, clip.id]);
+  }, [restored, keyframes, fullMode, fps, clip.id]);
 
   const captureCurrent = useCallback(() => {
     const kf = grabFrame();
@@ -275,7 +303,8 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   }, []);
 
   const toggleSelect = useCallback((id: string) => {
-    setAnalysisMode(COMPARE_MODE); // selecting frames is a compare action
+    // Selecting frames is a compare action; Custom compares too, so it stays.
+    setAnalysisMode((m) => (isCompareLike(m) ? m : COMPARE_MODE));
     setSelected((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
       const next = [...prev, id];
@@ -289,7 +318,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
     (id: string) => {
       const kf = keyframes.find((k) => k.id === id);
       if (kf) seekTo(kf.time);
-      if (analysisMode === COMPARE_MODE) toggleSelect(id);
+      if (isCompareLike(analysisMode)) toggleSelect(id);
     },
     [keyframes, seekTo, analysisMode, toggleSelect],
   );
@@ -310,10 +339,9 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
 
   // Label keyframes according to the active mode (e.g. Approach jump, 10-5 RSI).
   const frameLabels: Record<string, string> = {};
-  const labelForFrame = MODES.find((m) => m.id === analysisMode)?.labelForFrame;
-  if (labelForFrame) {
+  if (MODES.some((m) => m.id === analysisMode)) {
     keyframes.forEach((kf, i) => {
-      const label = labelForFrame(i);
+      const label = keyframeLabel(fullMode, i);
       if (label) frameLabels[kf.id] = label;
     });
   }
@@ -561,6 +589,27 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-3">
             <h2>Keyframes</h2>
+            <div className="flex items-center gap-1.5">
+            {analysisMode === "depth-jump" && (
+              <Select
+                value={String(depthReps)}
+                onValueChange={(v) => setDepthReps(Number(v))}
+              >
+                <SelectTrigger
+                  aria-label="Reps in this video"
+                  className="h-7! w-auto gap-1 rounded-full px-2.5 py-0 text-sm"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: MAX_DEPTH_REPS }, (_, i) => i + 1).map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n} rep{n === 1 ? "" : "s"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Select value={analysisMode} onValueChange={changeMode}>
               <SelectTrigger className="h-7! w-auto gap-1 rounded-full px-2.5 py-0 text-sm">
                 <SelectValue />
@@ -573,13 +622,28 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
                 ))}
               </SelectContent>
             </Select>
+            </div>
           </div>
+          {analysisMode === CUSTOM_MODE && (
+            <Input
+              value={customLabel}
+              onChange={(e) => setCustomLabel(e.target.value)}
+              maxLength={CUSTOM_LABEL_MAX}
+              placeholder="What is this? e.g. Box jump"
+              aria-label="Custom label, shown as this clip's title"
+              className="h-10 rounded-xl bg-white"
+            />
+          )}
           <p className="text-sm text-muted-foreground">
-            {analysisMode === COMPARE_MODE
-              ? selected.length < 2
-                ? "Select two to compare"
-                : "Comparing 2 frames"
-              : MODES.find((m) => m.id === analysisMode)?.hint}
+            {isCompareLike(analysisMode)
+              ? analysisMode === CUSTOM_MODE && !customLabel.trim()
+                ? "The label becomes this clip's title in your library and share links"
+                : selected.length < 2
+                  ? "Select two to compare"
+                  : "Comparing 2 frames"
+              : analysisMode === "depth-jump" && depthReps > 1
+                ? `Contact, takeoff, landing for each rep (${depthReps * 3} frames)`
+                : MODES.find((m) => m.id === analysisMode)?.hint}
           </p>
         </div>
         <KeyframeStrip
@@ -592,7 +656,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
       </section>
 
       {/* Mode panel (Approach jump, etc.) */}
-      {analysisMode !== COMPARE_MODE &&
+      {!isCompareLike(analysisMode) &&
         (() => {
           const mode = MODES.find((m) => m.id === analysisMode);
           if (!mode) return null;
@@ -600,13 +664,13 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
           return (
             <section className="space-y-3">
               <h2>{mode.label}</h2>
-              <Panel keyframes={keyframes} fps={fps} />
+              <Panel keyframes={keyframes} fps={fps} reps={depthReps} />
             </section>
           );
         })()}
 
       {/* Comparison */}
-      {analysisMode === COMPARE_MODE && selectedFrames.length === 2 && (
+      {isCompareLike(analysisMode) && selectedFrames.length === 2 && (
         <section className="space-y-3">
           <h2>Comparison</h2>
           <DiffPanel a={selectedFrames[0]} b={selectedFrames[1]} />

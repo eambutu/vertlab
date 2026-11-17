@@ -14,7 +14,7 @@ export interface AnalysisMode {
   hint: string;
   /** Label for the keyframe at a given index, shown in the strip. */
   labelForFrame?: (index: number) => string | undefined;
-  Panel: ComponentType<{ keyframes: Keyframe[]; fps: number }>;
+  Panel: ComponentType<{ keyframes: Keyframe[]; fps: number; reps: number }>;
 }
 
 const approachJumpMode: AnalysisMode = {
