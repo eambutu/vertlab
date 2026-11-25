@@ -8,6 +8,7 @@ import type {
   Share,
   SharedView,
 } from "./types";
+import { validateVideo } from "./upload";
 
 const DB_NAME = "vertlab";
 const DB_VERSION = 1;
@@ -36,8 +37,7 @@ function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
 function txDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Browser storage transaction aborted"));
   });
 }
 
@@ -92,6 +92,7 @@ export class LocalClipStore implements ClipStore {
   }
 
   async createClip(file: File): Promise<Clip> {
+    const contentType = validateVideo(file);
     const db = await this.db();
     const now = new Date();
     const clip: Clip = {
@@ -107,7 +108,8 @@ export class LocalClipStore implements ClipStore {
     };
     const tx = db.transaction(["clips", "videos"], "readwrite");
     tx.objectStore("clips").put(clip);
-    tx.objectStore("videos").put(file, clip.id);
+    const video = file.type === contentType ? file : file.slice(0, file.size, contentType);
+    tx.objectStore("videos").put(video, clip.id);
     await txDone(tx);
     this.emit();
     return clip;

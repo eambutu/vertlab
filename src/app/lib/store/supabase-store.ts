@@ -12,17 +12,28 @@ import type {
   StorageUsage,
 } from "./types";
 import { localDay } from "./local-store";
+import {
+  describeUploadError,
+  logUpload,
+  validateVideo,
+  videoContentType,
+  videoExtension,
+} from "./upload";
 
 const BUCKET = "clips";
 const SIGNED_URL_SECONDS = 60 * 60;
-/**
- * Must match the bucket's file_size_limit (supabase/migrations/…_clips_and_shares.sql)
- * and stay under the project's global upload limit (50 MB on the Free plan).
- */
-const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+const RESUMABLE_THRESHOLD_BYTES = 6 * 1024 * 1024;
 
-const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-const log = (...args: unknown[]) => console.info("[vertlab upload]", ...args);
+interface PendingUpload {
+  userId: string;
+  clipId: string;
+  file: File;
+  contentType: string;
+  path: string;
+  queuedAt: number;
+  controller: AbortController;
+  deleted?: boolean;
+}
 
 interface ClipRow {
   id: string;
@@ -54,17 +65,16 @@ interface ShareRow {
 const CLIP_COLUMNS =
   "id, user_id, created_at, day, title, mode, keyframes, fps, duration, width, height, summary, starred, poster, video_path";
 
-function extOf(file: File) {
-  const fromName = file.name.split(".").pop();
-  if (fromName && fromName.length <= 5) return fromName.toLowerCase();
-  return file.type.split("/")[1] ?? "mp4";
+function videoPath(userId: string, clipId: string, file: File) {
+  return `${userId}/${clipId}/video.${videoExtension(file) ?? "mp4"}`;
 }
 
 export class SupabaseClipStore implements ClipStore {
   private listeners = new Set<() => void>();
-  /** Videos picked on this device, kept until (and after) their upload. */
-  private localVideos = new Map<string, File>();
-  private uploading = new Set<string>();
+  /** Local playback while sending, and a retry source if sending fails. */
+  private localVideos = new Map<string, { file: File; path: string }>();
+  private uploads = new Map<string, PendingUpload>();
+  private activeUpload: PendingUpload | undefined;
   private signedUrls = new Map<string, { url: string; expires: number }>();
 
   constructor(
@@ -77,8 +87,9 @@ export class SupabaseClipStore implements ClipStore {
     sb.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "USER_UPDATED") {
         if (event === "SIGNED_OUT") {
+          this.activeUpload?.controller.abort();
           this.localVideos.clear();
-          this.uploading.clear();
+          this.uploads.clear();
           this.signedUrls.clear();
         }
         // Outside the auth callback, so queries don't wait on its lock.
@@ -123,9 +134,11 @@ export class SupabaseClipStore implements ClipStore {
       poster: r.poster ?? undefined,
       videoStatus: r.video_path
         ? "ready"
-        : this.uploading.has(r.id)
+        : this.activeUpload?.clipId === r.id && this.uploads.has(r.id)
           ? "uploading"
-          : "failed",
+          : this.uploads.has(r.id)
+            ? "queued"
+            : "failed",
     };
   }
 
@@ -141,15 +154,17 @@ export class SupabaseClipStore implements ClipStore {
 
   async getClip(id: string) {
     await this.session;
-    const { data } = await this.sb
+    const { data, error } = await this.sb
       .from("clips")
       .select(CLIP_COLUMNS)
       .eq("id", id)
       .maybeSingle();
+    if (error) throw error;
     return data ? this.toClip(data as ClipRow) : undefined;
   }
 
   async createClip(file: File): Promise<Clip> {
+    const contentType = validateVideo(file, true);
     const userId = await this.session;
     const now = new Date();
     const { data, error } = await this.sb
@@ -161,10 +176,7 @@ export class SupabaseClipStore implements ClipStore {
     const row = data as ClipRow;
 
     // The analyzer plays the local file right away; the upload runs behind it.
-    this.localVideos.set(row.id, file);
-    this.uploading.add(row.id);
-    this.upload(userId, row.id, file);
-    this.emit();
+    this.queueUpload(userId, row.id, file, contentType);
     return this.toClip(row);
   }
 
@@ -186,59 +198,110 @@ export class SupabaseClipStore implements ClipStore {
 
   async retryUpload(clipId: string, file?: File) {
     const userId = await this.session;
-    const video = file ?? this.localVideos.get(clipId);
+    const video = file ?? this.localVideos.get(clipId)?.file;
     if (!video) return false;
-    if (this.uploading.has(clipId)) return true;
-    log("retry", { clipId, fromPicker: !!file });
-    this.localVideos.set(clipId, video);
-    this.uploading.add(clipId);
-    this.emit();
-    void this.upload(userId, clipId, video);
+    if (this.uploads.has(clipId)) return true;
+    const contentType = validateVideo(video, true);
+    logUpload("retry selected", { clipId, fromPicker: !!file });
+    this.queueUpload(userId, clipId, video, contentType);
     return true;
   }
 
-  private async upload(userId: string, clipId: string, file: File) {
-    const path = `${userId}/${clipId}/video.${extOf(file)}`;
+  private queueUpload(userId: string, clipId: string, file: File, contentType: string) {
+    // A replacement can have a different extension. Keep the original object
+    // key in this tab so retrying a failed link can't leave a second object.
+    const path = this.localVideos.get(clipId)?.path ?? videoPath(userId, clipId, file);
+    this.localVideos.set(clipId, { file, path });
+    this.signedUrls.delete(clipId);
+    this.uploads.set(clipId, {
+      userId,
+      clipId,
+      file,
+      contentType,
+      path,
+      queuedAt: performance.now(),
+      controller: new AbortController(),
+    });
+    logUpload("queued", { clipId, bytes: file.size, pending: this.uploads.size });
+    this.startNextUpload();
+    this.emit();
+  }
+
+  private startNextUpload() {
+    if (this.activeUpload) return;
+    const next = this.uploads.values().next().value;
+    if (!next) return;
+    this.activeUpload = next;
+    void this.upload(next).finally(() => {
+      if (this.uploads.get(next.clipId) === next) this.uploads.delete(next.clipId);
+      this.activeUpload = undefined;
+      this.startNextUpload();
+      this.emit();
+    });
+  }
+
+  private async upload(task: PendingUpload) {
+    const { userId, clipId, file, contentType, path, controller } = task;
+    const { signal } = controller;
+    const resumable = file.size >= RESUMABLE_THRESHOLD_BYTES;
     const started = performance.now();
-    const info = { clipId, path, name: file.name, type: file.type, size: mb(file.size) };
-    log("start", info);
+    const info = { clipId, bytes: file.size, contentType, transfer: resumable ? "resumable" : "standard" };
+    const elapsed = () => Math.round(performance.now() - started);
+    let stage = "transfer";
+    logUpload("transfer started", { ...info, queueMs: Math.round(started - task.queuedAt) });
     try {
-      if (file.size > MAX_UPLOAD_BYTES) {
-        throw new Error(
-          `File is ${mb(file.size)}; the upload limit is ${mb(MAX_UPLOAD_BYTES)}`,
-        );
+      if (resumable) {
+        const { uploadResumableVideo } = await import("./resumable-upload");
+        await uploadResumableVideo({
+          projectUrl: this.url, anonKey: this.anonKey, bucket: BUCKET,
+          path, clipId, file, contentType, signal,
+          getAccessToken: async () => {
+            const { data, error } = await this.sb.auth.getSession();
+            if (error) throw error;
+            if (data.session?.user.id !== userId) throw new Error("Upload session changed");
+            return data.session.access_token;
+          },
+        });
+      } else {
+        // The SDK uses the Blob's MIME type for multipart uploads.
+        const video = file.type === contentType ? file : file.slice(0, file.size, contentType);
+        const { error } = await this.sb.storage.from(BUCKET).upload(path, video, { upsert: true });
+        if (error) throw error;
       }
-      const { error } = await this.sb.storage
-        .from(BUCKET)
-        .upload(path, file, { contentType: file.type || "video/mp4", upsert: true });
-      if (error) throw error;
-      log("stored", { clipId, seconds: ((performance.now() - started) / 1000).toFixed(1) });
-      const { error: updateError } = await this.sb
+      signal.throwIfAborted();
+      logUpload("transfer finished", { clipId, elapsedMs: elapsed() });
+      stage = "link clip";
+      const { data, error } = await this.sb
         .from("clips")
         .update({ video_path: path })
-        .eq("id", clipId);
-      if (updateError) throw updateError;
-      log("done", { clipId });
-    } catch (e) {
-      // StorageApiError carries the HTTP status (413 = too large, 403 = policy).
-      const err = e as { message?: string; status?: number; statusCode?: string };
-      console.error("[vertlab upload] failed", {
-        ...info,
-        seconds: ((performance.now() - started) / 1000).toFixed(1),
-        status: err.status ?? err.statusCode,
-        message: err.message,
-        error: e,
-      });
-      toast.error("Video didn't upload", {
-        description:
-          file.size > MAX_UPLOAD_BYTES
-            ? `It's ${mb(file.size)}; videos can be up to ${mb(MAX_UPLOAD_BYTES)}. Trim it and retry from the ••• menu.`
-            : `${err.message ?? "Check your connection."} Retry from the ••• menu.`,
+        .eq("id", clipId)
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        await this.removeVideos(clipId, [path]);
+        throw new Error("Clip row no longer exists");
+      }
+      signal.throwIfAborted();
+      this.localVideos.delete(clipId);
+      logUpload("clip linked", { clipId, elapsedMs: elapsed() });
+    } catch (error) {
+      if (signal.aborted) {
+        logUpload("transfer canceled", { clipId, stage, elapsedMs: elapsed() });
+        if (task.deleted) await this.removeVideos(clipId, [path]);
+        return;
+      }
+      const details = describeUploadError(error);
+      logUpload("upload failed", { ...info, stage, elapsedMs: elapsed(), ...details }, "error");
+      toast.error(`Couldn't upload ${file.name}`, {
+        description: details.reason ?? (stage === "link clip"
+          ? "The video reached storage, but couldn't be linked to the clip. Retry from the library."
+          : "Check your connection, then retry from the library."),
         duration: 10_000,
       });
     } finally {
-      this.uploading.delete(clipId);
-      this.emit();
+      // A retry uses a fresh URL if the same object was previously signed.
+      this.signedUrls.delete(clipId);
     }
   }
 
@@ -251,14 +314,29 @@ export class SupabaseClipStore implements ClipStore {
 
   async deleteClip(id: string) {
     await this.session;
-    const { data } = await this.sb
+    const { data, error } = await this.sb
       .from("clips")
-      .select("video_path")
+      .delete()
       .eq("id", id)
+      .select("video_path")
       .maybeSingle();
-    const { error } = await this.sb.from("clips").delete().eq("id", id);
     if (error) throw error;
-    if (data?.video_path) await this.sb.storage.from(BUCKET).remove([data.video_path]);
+    const pending = this.uploads.get(id);
+    if (pending) {
+      pending.deleted = true;
+      pending.controller.abort();
+      this.uploads.delete(id);
+    }
+    const paths = new Set<string>();
+    if (data?.video_path) paths.add(data.video_path);
+    const local = this.localVideos.get(id);
+    // A failed link may have already left an object in Storage.
+    if (local && (!pending || pending !== this.activeUpload)) {
+      paths.add(local.path);
+    }
+    this.localVideos.delete(id);
+    this.signedUrls.delete(id);
+    if (paths.size) await this.removeVideos(id, [...paths]);
     // Links left with no clips stop working; mark them stopped.
     const empty = await this.emptyShareIds();
     if (empty.length) {
@@ -267,9 +345,16 @@ export class SupabaseClipStore implements ClipStore {
         .update({ revoked_at: new Date().toISOString() })
         .in("id", empty);
     }
-    this.localVideos.delete(id);
-    this.signedUrls.delete(id);
     this.emit();
+  }
+
+  private async removeVideos(clipId: string, paths: string[]) {
+    try {
+      const { error } = await this.sb.storage.from(BUCKET).remove(paths);
+      if (error) throw error;
+    } catch (error) {
+      logUpload("storage cleanup failed", { clipId, ...describeUploadError(error) }, "warn");
+    }
   }
 
   private async emptyShareIds(): Promise<string[]> {
@@ -283,23 +368,29 @@ export class SupabaseClipStore implements ClipStore {
   }
 
   async getVideoUrl(id: string) {
-    const local = this.localVideos.get(id);
-    if (local) return URL.createObjectURL(local);
+    const local = this.localVideos.get(id)?.file;
+    if (local) {
+      const type = videoContentType(local);
+      const video = type === local.type ? local : local.slice(0, local.size, type);
+      return URL.createObjectURL(video);
+    }
 
     const cached = this.signedUrls.get(id);
     if (cached && cached.expires > Date.now() + 60_000) return cached.url;
 
     await this.session;
-    const { data } = await this.sb
+    const { data, error: lookupError } = await this.sb
       .from("clips")
       .select("video_path")
       .eq("id", id)
       .maybeSingle();
+    if (lookupError) throw lookupError;
     if (!data?.video_path) return undefined;
     const { data: signed, error } = await this.sb.storage
       .from(BUCKET)
       .createSignedUrl(data.video_path, SIGNED_URL_SECONDS);
-    if (error || !signed) return undefined;
+    if (error) throw error;
+    if (!signed) return undefined;
     this.signedUrls.set(id, {
       url: signed.signedUrl,
       expires: Date.now() + SIGNED_URL_SECONDS * 1000,

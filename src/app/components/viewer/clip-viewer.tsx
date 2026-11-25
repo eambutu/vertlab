@@ -9,6 +9,8 @@ import { KeyframeStrip } from "../keyframe-strip";
 import { ModeResults } from "../modes/mode-results";
 import { PlayerControls } from "../player-controls";
 import { useFrameThumbs } from "./use-frame-thumbs";
+import { ErrorReport } from "../error-report";
+import { useVideoDiagnostics } from "../use-video-diagnostics";
 
 /**
  * Read-only player + numbers for one shared jump. Built from the analyzer's
@@ -17,6 +19,8 @@ import { useFrameThumbs } from "./use-frame-thumbs";
 export function ClipViewer({ clip }: { clip: SharedClip }) {
   const unit = useUnit();
   const video = useRef<HTMLVideoElement>(null);
+  const [loadId] = useState(() => crypto.randomUUID());
+  const diagnostics = useVideoDiagnostics(video, clip.videoUrl, clip.id, loadId, "shared");
   const [playing, setPlaying] = useState(false);
   const [slow, setSlow] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -58,7 +62,7 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
   function toggle() {
     const v = video.current;
     if (!v) return;
-    if (v.paused) v.play().catch(() => {});
+    if (v.paused) diagnostics.play(v);
     else v.pause();
   }
 
@@ -101,11 +105,24 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
           style={{ aspectRatio: aspect }}
           className="max-h-[70vh] w-full bg-black object-contain"
           onClick={toggle}
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+          onLoadedMetadata={(e) => {
+            diagnostics.onMetadata(e.currentTarget);
+            setDuration(e.currentTarget.duration);
+          }}
+          onError={(e) => diagnostics.onError(e.currentTarget)}
+          onLoadedData={(e) => diagnostics.onFrameReady(e.currentTarget)}
+          onCanPlay={(e) => diagnostics.onFrameReady(e.currentTarget)}
+          onStalled={(e) => diagnostics.onStalled(e.currentTarget)}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
         />
+        {diagnostics.message && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-auto p-4 text-center">
+            <p role="alert" className="text-sm text-white">{diagnostics.message}</p>
+            <ErrorReport />
+          </div>
+        )}
       </div>
 
       <PlayerControls

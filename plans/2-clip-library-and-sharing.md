@@ -109,10 +109,14 @@ clients can't choose tokens.
 - Upload with **resumable (TUS) uploads** for videos. Phone slow-mo clips run to
   hundreds of MB. The free plan caps files at 50 MB, so this needs the Pro plan
   with a higher per-file limit, or client-side downscaling later.
-- Save order: insert the clip row right away and open the analyzer on the
-  local file. Upload the video in the background and set `video_path` when it
-  finishes. The library shows "Uploading video…" until then. v1 uses a
-  standard upload; switch to TUS for big files.
+- Save order: insert the clip row and keep the local file available for
+  analysis. A single video opens the analyzer. Multi-file imports stay in
+  the library. Cloud videos are sent one at a time. Files of 6 MiB or more
+  use TUS with automatic resumption on transient errors during the attempt.
+  Smaller files use a standard upload. The library shows waiting and uploading
+  states until `video_path` is set. Keep the tab open for background uploads.
+- The browser console logs these stages under `[vertlab upload]`. Use the
+  batch ID to track a selection and the clip ID to follow an individual upload.
 
 ## Public viewing: `share-view` edge function
 

@@ -171,6 +171,8 @@ export function modeLabel(clip: Pick<Clip, "mode">) {
 
 /** Second line under the mode: the result detail, or what's still missing. */
 export function clipSubline(clip: Clip | SharedClip): string {
+  if ("videoStatus" in clip && clip.videoStatus === "queued")
+    return "Waiting to upload…";
   if ("videoStatus" in clip && clip.videoStatus === "uploading")
     return "Uploading video…";
   if ("videoStatus" in clip && clip.videoStatus === "failed")

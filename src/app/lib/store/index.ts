@@ -25,19 +25,22 @@ function useStoreQuery<T>(load: () => Promise<T>, deps: unknown[]) {
   const run = useCallback(load, deps);
   useEffect(() => {
     let alive = true;
-    const refresh = () =>
-      run()
+    let latest = 0;
+    const refresh = () => {
+      const request = ++latest;
+      return run()
         .then((d) => {
-          if (alive) setData(d);
+          if (alive && request === latest) setData(d);
         })
         .catch((e) => {
+          if (!alive || request !== latest) return;
           console.error(e);
-          if (alive)
-            toast.error("Couldn't load your library", {
-              id: "store-error",
-              description: "Check your connection and reload.",
-            });
+          toast.error("Couldn't load your library", {
+            id: "store-error",
+            description: "Check your connection and reload.",
+          });
         });
+    };
     refresh();
     const unsub = store.subscribe(refresh);
     return () => {
@@ -52,11 +55,14 @@ export function useClips(): Clip[] | undefined {
   return useStoreQuery(() => store.listClips(), []);
 }
 
-export function useClip(id: string | undefined) {
-  return useStoreQuery(
-    () => (id ? store.getClip(id) : Promise.resolve(undefined)),
-    [id],
-  );
+export function useClip(id: string) {
+  return useStoreQuery(async () => {
+    try {
+      return { status: "loaded" as const, clip: await store.getClip(id) };
+    } catch (error) {
+      return { status: "failed" as const, error };
+    }
+  }, [id]);
 }
 
 /** Reloads with the library, so adding or deleting a clip updates it. */
