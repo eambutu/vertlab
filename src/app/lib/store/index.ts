@@ -55,11 +55,14 @@ export function useClips(): Clip[] | undefined {
   return useStoreQuery(() => store.listClips(), []);
 }
 
-export function useClip(id: string | undefined) {
-  return useStoreQuery(
-    () => (id ? store.getClip(id) : Promise.resolve(undefined)),
-    [id],
-  );
+export function useClip(id: string) {
+  return useStoreQuery(async () => {
+    try {
+      return { status: "loaded" as const, clip: await store.getClip(id) };
+    } catch (error) {
+      return { status: "failed" as const, error };
+    }
+  }, [id]);
 }
 
 /** Reloads with the library, so adding or deleting a clip updates it. */

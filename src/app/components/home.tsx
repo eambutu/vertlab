@@ -71,18 +71,16 @@ export function Home(props: UploaderProps) {
   return (
     <HeroShell
       corner={
-        isCloudBacked && (
-          <Link
-            to="/settings"
-            aria-label="Settings"
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "icon" }),
-              "size-11 rounded-full text-zinc-700",
-            )}
-          >
-            <Settings className="size-[21px]" />
-          </Link>
-        )
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            "size-11 rounded-full text-zinc-700",
+          )}
+        >
+          <Settings className="size-[21px]" />
+        </Link>
       }
       footer={
         isCloudBacked ? (

@@ -415,7 +415,7 @@ export class SupabaseClipStore implements ClipStore {
           ? { ...entry, video: { ...entry.video, missing: true } } : entry);
         if (latest?.video?.id !== video.id) return;
         this.localVideoIds.delete(id);
-        throw new VideoUploadError("The browser removed the saved video. Select it again to retry.");
+        throw new VideoUploadError("missing video", "The browser removed the saved video. Select it again to retry.");
       }
       await this.transfer(job, video, file, userId, signal);
       await changeJob(scope, id, (entry) => entry?.video?.id === video.id

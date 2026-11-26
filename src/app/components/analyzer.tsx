@@ -36,7 +36,8 @@ import {
 import { ShareClipDrawer } from "./share/share-drawers";
 import { DeleteClipDialog } from "./library/delete-clip-dialog";
 import { store, useShowErrors } from "../lib/store";
-import { logUpload } from "../lib/store/upload";
+import { ErrorReport } from "./error-report";
+import { useVideoDiagnostics } from "./use-video-diagnostics";
 import type { Clip } from "../lib/store";
 import {
   CUSTOM_LABEL_MAX,
@@ -87,6 +88,7 @@ import type { Keyframe } from "./types";
 interface AnalyzerProps {
   clip: Clip;
   videoUrl: string;
+  loadId: string;
 }
 
 const POSTER_WIDTH = 240;
@@ -95,9 +97,11 @@ const SAVE_DEBOUNCE_MS = 400;
 // Fixed downscale width for diff comparisons (keeps all frames aligned & fast).
 const DIFF_WIDTH = 160;
 
-export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
+export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const { onMetadata, onFrameReady, onError, onStalled, play, message: playbackMessage } =
+    useVideoDiagnostics(videoRef, url, clip.id, loadId, "library");
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -124,7 +128,6 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   const [fps, setFps] = useState(clip.fps ?? 30);
   const showErrors = useShowErrors();
   const [detecting, setDetecting] = useState(true);
-  const [playbackError, setPlaybackError] = useState<number>();
   const [aspect, setAspect] = useState(
     clip.width && clip.height ? clip.width / clip.height : 16 / 9,
   );
@@ -327,13 +330,11 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      // play() returns a promise that rejects with AbortError if the video is
-      // paused/seeked before playback starts; swallow it (state syncs via events).
-      v.play().catch(() => {});
+      play(v);
     } else {
       v.pause();
     }
-  }, []);
+  }, [play]);
 
   const toggleSelect = useCallback((id: string) => {
     // Selecting frames is a compare action; Custom compares too, so it stays.
@@ -458,6 +459,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
           className="max-h-[70vh] w-full bg-black object-contain"
           onLoadedMetadata={(e) => {
             const v = e.currentTarget;
+            onMetadata(v);
             setDuration(v.duration);
             if (v.videoWidth && v.videoHeight) {
               setAspect(v.videoWidth / v.videoHeight);
@@ -473,27 +475,23 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
               })
               .finally(() => setDetecting(false));
           }}
+          onLoadedData={(event) => onFrameReady(event.currentTarget)}
+          onCanPlay={(event) => onFrameReady(event.currentTarget)}
           onError={(event) => {
-            const video = event.currentTarget;
-            const code = video.error?.code ?? 0;
-            logUpload("video playback failed", {
-              clipId: clip.id, code, source: url.startsWith("blob:") ? "local" : "cloud",
-              readyState: video.readyState,
-            }, "error");
-            setPlaybackError(code);
+            onError(event.currentTarget);
             setDetecting(false);
           }}
+          onStalled={(event) => onStalled(event.currentTarget)}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onClick={togglePlay}
         />
         {/* Masks the brief playback used to measure the frame rate. */}
-        {playbackError !== undefined ? (
-          <p role="alert" className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-white">
-            {playbackError === 3 || playbackError === 4
-              ? "This video couldn't be decoded. Try exporting it as an H.264 MP4."
-              : "Couldn't play this video. Try reopening it from the library."}
-          </p>
+        {playbackMessage ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-auto p-4 text-center">
+            <p role="alert" className="text-sm text-white">{playbackMessage}</p>
+            <ErrorReport />
+          </div>
         ) : detecting && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black text-sm text-white/80">
             <Loader2 className="size-4 animate-spin" />
