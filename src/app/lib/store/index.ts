@@ -163,8 +163,8 @@ export function useShowErrors(): boolean {
 
 /* ---------- Share URLs ---------- */
 
-export function shareUrl(share: Pick<Share, "kind" | "token">): string {
-  return `${window.location.origin}/${share.kind === "day" ? "d" : "j"}/${share.token}`;
+export function shareUrl(share: Pick<Share, "kind" | "token" | "id">): string {
+  return `${window.location.origin}/${share.kind === "day" ? "d" : "j"}/${share.kind === "day" ? share.token + "." + share.id : share.token}`;
 }
 
 /** Display form without the scheme, e.g. "vertlab.app/j/k7q2mx". */

@@ -41,21 +41,49 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 
-  const token = new URL(req.url).searchParams.get("token") ?? "";
-  if (!/^[0-9A-Za-z]{6,32}$/.test(token)) return json({ error: "not_found" }, 404);
+  const params = new URL(req.url).searchParams;
+  const match = /^([0-9A-Za-z]{6,32})(?:\.([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}))?$/.exec(params.get("token") ?? "");
+  const day = params.get("day");
+  if (!match || (day !== null && (!match[2] || !/^\d{4}-\d{2}-\d{2}$/.test(day)))) return json({ error: "not_found" }, 404);
 
-  const { data: share } = await admin
+  const { data: root, error: rootError } = await admin
     .from("shares")
     .select("id, user_id, kind, day")
-    .eq("token", token)
+    .eq("token", match[1])
     .is("revoked_at", null)
     .maybeSingle();
-  if (!share) return json({ error: "not_found" }, 404);
+  if (rootError) return json({ error: "lookup_failed" }, 500);
+  if (!root) return json({ error: "not_found" }, 404);
+
+  let share = root;
+  let sharedDays: string[] | undefined;
+  if (match[2]) {
+    // The owner includes the random share UUID only when copying a library link.
+    if (root.kind !== "day" || root.id !== match[2]) return json({ error: "not_found" }, 404);
+    const sessions: { id: string; day: string }[] = [];
+    for (let offset = 0; ; offset += 200) {
+      const { data, error } = await admin.from("shares")
+        .select("id, day, share_clips!inner(clips!inner(id))")
+        .eq("user_id", root.user_id).eq("kind", "day").is("revoked_at", null)
+        .eq("share_clips.clips.user_id", root.user_id)
+        .not("share_clips.clips.video_path", "is", null)
+        .limit(1, { referencedTable: "share_clips" })
+        .order("day", { ascending: false }).range(offset, offset + 199);
+      if (error) return json({ error: "lookup_failed" }, 500);
+      sessions.push(...data);
+      if (data.length < 200) break;
+    }
+    const selected = sessions.find(s => s.day === (day ?? root.day));
+    if (!selected || !sessions.some(s => s.id === root.id)) return json({ error: "not_found" }, 404);
+    sharedDays = sessions.map(s => s.day);
+    share = { ...root, id: selected.id, day: selected.day };
+  }
 
   const { data: rows, error } = await admin
     .from("share_clips")
-    .select(`position, clips (${CLIP_FIELDS})`)
+    .select(`position, clips!inner (${CLIP_FIELDS})`)
     .eq("share_id", share.id)
+    .eq("clips.user_id", root.user_id)
     .order("position");
   if (error) return json({ error: "lookup_failed" }, 500);
 
@@ -89,6 +117,7 @@ Deno.serve(async (req) => {
     kind: share.kind,
     day: share.day ?? undefined,
     partOf,
+    sharedDays,
     // deno-lint-ignore no-explicit-any
     clips: clips.map((c: any, i: number) => ({
       id: c.id,

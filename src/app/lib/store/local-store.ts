@@ -227,9 +227,16 @@ export class LocalClipStore implements ClipStore {
     this.emit();
   }
 
-  async openShare(token: string): Promise<SharedView | undefined> {
+  async openShare(token: string, day?: string): Promise<SharedView | undefined> {
     const shares = await this.listShares();
-    const share = shares.find((s) => s.token === token);
+    const root = shares.find((s) => s.token === token ||
+      (s.kind === "day" && token === s.token + "." + s.id));
+    if (!root) return undefined;
+    const library = token !== root.token;
+    const share = library && day
+      ? shares.find((s) => s.kind === "day" && s.day === day)
+      : root;
+    if (day && !library) return undefined;
     if (!share) return undefined;
     const clips: SharedClip[] = [];
     for (const id of share.clipIds) {
@@ -260,6 +267,8 @@ export class LocalClipStore implements ClipStore {
       if (day?.day)
         partOf = { token: day.token, day: day.day, count: day.clipIds.length };
     }
-    return { kind: share.kind, day: share.day, clips, partOf };
+    return { kind: share.kind, day: share.day, clips, partOf,
+      sharedDays: library ? shares.flatMap(s => s.kind === "day" && s.day && s.clipIds.length ? [s.day] : []).sort().reverse() : undefined,
+    };
   }
 }

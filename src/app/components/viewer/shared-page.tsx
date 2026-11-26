@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { ChevronLeft, ChevronRight, Link2Off } from "lucide-react";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
-import { dayLong, dayShort, plural, whenRecorded } from "../../lib/format";
+import { dayHeading, dayLong, dayShort, plural, whenRecorded } from "../../lib/format";
 import { store, useUnit } from "../../lib/store";
 import type { SharedView } from "../../lib/store";
 import {
@@ -52,31 +52,53 @@ function Footer() {
   );
 }
 
-function useShare(token: string | undefined) {
+function revoke(url: string) {
+  if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+}
+
+function useShare(token: string | undefined, day?: string) {
   const [view, setView] = useState<SharedView | null | undefined>(undefined);
   useEffect(() => {
     if (!token) return;
     let alive = true;
     let urls: string[] = [];
     setView(undefined);
-    store.openShare(token).then((v) => {
+    store.openShare(token, day).then((v) => {
       urls = v?.clips.map((c) => c.videoUrl) ?? [];
       if (alive) setView(v ?? null);
-    });
+      else urls.forEach(revoke);
+    }).catch(() => { if (alive) setView(null); });
     return () => {
       alive = false;
-      urls.forEach((u) => u.startsWith("blob:") && URL.revokeObjectURL(u));
+      urls.forEach(revoke);
     };
-  }, [token]);
+  }, [token, day]);
   return view;
 }
 
 /** /j/:token, /d/:token and /d/:token/:n */
 export function SharedPage({ kind }: { kind: "clip" | "day" }) {
   const { token, n } = useParams();
+  const [params] = useSearchParams();
+  const day = params.get("day") ?? undefined;
+  return <SharedSession key={JSON.stringify([token, day])} kind={kind} token={token} n={n} day={day} />;
+}
+
+function SharedSession({ kind, token, n, day }: {
+  kind: "clip" | "day"; token?: string; n?: string; day?: string;
+}) {
   const navigate = useNavigate();
   const unit = useUnit();
-  const view = useShare(token);
+  const view = useShare(token, day);
+  const activeDay = useRef<HTMLHeadingElement>(null);
+  const query = day ? "?" + new URLSearchParams({ day }) : "";
+  useEffect(() => {
+    if (view?.sharedDays && !n && activeDay.current) {
+      activeDay.current.focus({ preventScroll: true });
+      const top = activeDay.current.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight / 2) activeDay.current.scrollIntoView({ block: "start" });
+    }
+  }, [view, n]);
 
   if (view === undefined) {
     return (
@@ -138,9 +160,9 @@ export function SharedPage({ kind }: { kind: "clip" | "day" }) {
   /* ----- A jump inside a shared day ----- */
   const total = view.clips.length;
   const index = n ? Number(n) - 1 : -1;
-  if (index >= 0 && index < total) {
+  if (Number.isInteger(index) && index >= 0 && index < total) {
     const clip = view.clips[index];
-    const go = (i: number) => navigate(`/d/${token}/${((i + total) % total) + 1}`, { replace: true });
+    const go = (i: number) => navigate(`/d/${token}/${((i + total) % total) + 1}${query}`, { replace: true });
     return (
       <Page>
         <header className="-ml-2 flex items-center gap-0.5 pb-2 pt-3.5">
@@ -149,7 +171,7 @@ export function SharedPage({ kind }: { kind: "clip" | "day" }) {
             variant="ghost"
             className="h-11 gap-1 pl-1.5 pr-2.5 text-[15px] font-semibold"
           >
-            <Link to={`/d/${token}`}>
+            <Link to={`/d/${token}${query}`}>
               <ChevronLeft className="size-5" />
               {view.day ? dayShort(view.day) : "Back"}
             </Link>
@@ -183,32 +205,52 @@ export function SharedPage({ kind }: { kind: "clip" | "day" }) {
     );
   }
 
-  /* ----- The day ----- */
+  const jumps = (
+    <ListCard>
+      {view.clips.map((c, i) => (
+        <Link
+          key={c.id}
+          to={`/d/${token}/${i + 1}${query}`}
+          className="flex items-center gap-3 py-2.5 pl-3 pr-2 hover:bg-zinc-50"
+        >
+          <ClipThumb clip={c} />
+          <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
+            <span className="text-sm font-medium">{modeLabel(c)}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {clipSubline(c)}
+            </span>
+          </span>
+          <Headline clip={c} unit={unit} />
+          <ChevronRight className="size-4 shrink-0 text-zinc-500" />
+        </Link>
+      ))}
+    </ListCard>
+  );
+
   return (
     <Page>
-      <BrandHeader
-        eyebrow="Shared session"
-        title={view.day ? dayLong(view.day) : "Session"}
-      />
-      <ListCard>
-        {view.clips.map((c, i) => (
-          <Link
-            key={c.id}
-            to={`/d/${token}/${i + 1}`}
-            className="flex items-center gap-3 py-2.5 pl-3 pr-2 hover:bg-zinc-50"
-          >
-            <ClipThumb clip={c} />
-            <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-              <span className="text-sm font-medium">{modeLabel(c)}</span>
-              <span className="truncate text-xs text-muted-foreground">
-                {clipSubline(c)}
-              </span>
-            </span>
-            <Headline clip={c} unit={unit} />
-            <ChevronRight className="size-4 shrink-0 text-zinc-500" />
-          </Link>
-        ))}
-      </ListCard>
+      <BrandHeader eyebrow="VertLab" title={view.sharedDays ? "Shared library" : view.day ? dayLong(view.day) : "Session"} />
+      {view.sharedDays ? (
+        <div className="space-y-3">
+          {view.sharedDays.map(date => {
+            const selected = date === view.day;
+            return selected ? (
+              <section key={date} className="space-y-2 rounded-2xl bg-zinc-200/65 p-2.5">
+                <h2 ref={activeDay} tabIndex={-1} className="scroll-mt-4 px-1 text-base font-semibold">
+                  {dayHeading(date)}
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">{plural(total, "jump")}</span>
+                </h2>
+                {jumps}
+              </section>
+            ) : (
+              <Link key={date} to={`/d/${token}?day=${date}`}
+                className="flex min-h-12 items-center justify-between rounded-2xl border border-black/10 bg-white px-4 text-sm font-semibold hover:bg-zinc-50">
+                {dayHeading(date)} <ChevronRight aria-hidden className="size-4 text-zinc-500" />
+              </Link>
+            );
+          })}
+        </div>
+      ) : jumps}
       <Footer />
     </Page>
   );

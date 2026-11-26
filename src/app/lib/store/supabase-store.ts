@@ -625,9 +625,9 @@ export class SupabaseClipStore implements ClipStore {
   }
 
   /** Works without an account: goes through the public share-view function. */
-  async openShare(token: string): Promise<SharedView | undefined> {
+  async openShare(token: string, day?: string): Promise<SharedView | undefined> {
     const res = await fetch(
-      `${this.url}/functions/v1/share-view?token=${encodeURIComponent(token)}`,
+      `${this.url}/functions/v1/share-view?${new URLSearchParams(day ? { token, day } : { token })}`,
       { headers: { apikey: this.anonKey, Authorization: `Bearer ${this.anonKey}` } },
     );
     if (!res.ok) return undefined;
