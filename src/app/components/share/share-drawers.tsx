@@ -12,7 +12,7 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { cn } from "../ui/utils";
 import { dayShort, whenRecorded } from "../../lib/format";
-import { shareUrl, store, useUnit } from "../../lib/store";
+import { isCloudBacked, shareUrl, store, useOnline, useUnit } from "../../lib/store";
 import type { Clip, Share } from "../../lib/store";
 import { LinkField } from "./link-field";
 import { ClipThumb, Headline, clipSubline, modeLabel } from "../library/parts";
@@ -44,19 +44,24 @@ export function ShareClipDrawer({
   onOpenChange: (open: boolean) => void;
 }) {
   const unit = useUnit();
+  const online = useOnline();
   const [share, setShare] = useState<Share | null>(null);
+  const canShare = !!clip && (!isCloudBacked || (online && clip.videoStatus === "ready"));
 
   // Opening the sheet makes (or reuses) the link, as in the design.
   useEffect(() => {
     if (!open || !clip) return;
-    let alive = true;
     setShare(null);
-    store.shareClip(clip.id).then((s) => alive && setShare(s));
+    if (!canShare) return;
+    let alive = true;
+    void store.shareClip(clip.id).then((s) => alive && setShare(s)).catch(() => {
+      if (alive) toast.error("Couldn't create the link. Try again when you're online.");
+    });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, clip?.id]);
+  }, [open, clip?.id, canShare]);
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -84,22 +89,22 @@ export function ShareClipDrawer({
               </div>
             </div>
 
-            <LinkField url={share ? shareUrl(share) : undefined} />
-            {clip.videoStatus === "uploading" && (
-              <p className="-mt-2 text-xs text-muted-foreground">
-                The video is still uploading. The link opens once it's done.
+            {canShare ? <LinkField url={share ? shareUrl(share) : undefined} /> : (
+              <p className="text-sm text-muted-foreground">
+                {online ? "You can share this clip once its video has synced." : "Connect to the internet to share this clip."}
               </p>
             )}
-
-            <StopSharingButton
-              onClick={async () => {
-                if (share) await store.stopSharing(share.id);
-                onOpenChange(false);
-                toast("Link stopped", {
-                  description: "Anyone who opens it now sees it's unavailable.",
-                });
-              }}
-            />
+            {share && canShare && (
+              <StopSharingButton
+                onClick={async () => {
+                  await store.stopSharing(share.id);
+                  onOpenChange(false);
+                  toast("Link stopped", {
+                    description: "Anyone who opens it now sees it's unavailable.",
+                  });
+                }}
+              />
+            )}
           </div>
         )}
       </DrawerContent>
@@ -121,35 +126,41 @@ export function ShareDayDrawer({
   onOpenChange: (open: boolean) => void;
 }) {
   const unit = useUnit();
+  const online = useOnline();
   const [share, setShare] = useState<Share | null>(null);
   const [included, setIncluded] = useState<string[]>([]);
 
   // Oldest first, the order the session happened in.
-  const ordered = [...clips].sort((a, b) => a.createdAt - b.createdAt);
+  const ordered = clips.filter((clip) => !isCloudBacked || clip.videoStatus === "ready")
+    .sort((a, b) => a.createdAt - b.createdAt);
   const orderedKey = ordered.map((c) => c.id).join(",");
+  const canShare = ordered.length > 0 && (!isCloudBacked || online);
 
   useEffect(() => {
     if (!open || !day) return;
-    let alive = true;
     setShare(null);
-    (async () => {
+    if (!canShare) return;
+    let alive = true;
+    void (async () => {
       const existing = (await store.listShares()).find(
         (s) => s.kind === "day" && s.day === day,
       );
       const ids = existing
         ? ordered.filter((c) => existing.clipIds.includes(c.id)).map((c) => c.id)
         : ordered.map((c) => c.id);
-      const s = await store.shareDay(day, ids);
+      const s = existing ?? await store.shareDay(day, ids);
       if (alive) {
         setIncluded(ids);
         setShare(s);
       }
-    })();
+    })().catch(() => {
+      if (alive) toast.error("Couldn't create the link. Try again when you're online.");
+    });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, day, orderedKey]);
+  }, [open, day, orderedKey, canShare]);
 
   async function toggle(id: string, on: boolean) {
     if (!day) return;
@@ -160,8 +171,12 @@ export function ShareDayDrawer({
       toast("Keep at least one jump in the link");
       return;
     }
-    setIncluded(next);
-    setShare(await store.shareDay(day, next));
+    try {
+      setShare(await store.shareDay(day, next));
+      setIncluded(next);
+    } catch {
+      toast.error("Couldn't update the link. Try again when you're online.");
+    }
   }
 
   return (
@@ -172,11 +187,14 @@ export function ShareDayDrawer({
             <DrawerHeader className="gap-1 p-0 text-left">
               <DrawerTitle className="text-lg">Share {dayShort(day)}</DrawerTitle>
               <DrawerDescription className="text-[13px]">
-                One link that opens the whole day. Untick anything you'd rather
-                leave out.
+                {!canShare ? (online ? "You can share these clips once their videos have synced."
+                  : "Connect to the internet to share this day.")
+                  : ordered.length < clips.length ? "Choose which synced clips to include in the link."
+                  : "One link that opens the whole day. Untick anything you'd rather leave out."}
               </DrawerDescription>
             </DrawerHeader>
 
+            {canShare && <>
             {/* A div, not a fieldset: fieldsets don't reliably shrink and clip
                 inside a flex column, so the list spilled over the footer. */}
             <div
@@ -234,6 +252,7 @@ export function ShareDayDrawer({
                 }}
               />
             </div>
+            </>}
           </div>
         )}
       </DrawerContent>

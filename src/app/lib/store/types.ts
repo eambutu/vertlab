@@ -19,10 +19,9 @@ export interface Clip {
   /** Small JPEG data URL used for list thumbnails. */
   poster?: string;
   /**
-   * Whether the video is stored. "uploading" while it's still being sent;
-   * "failed" if this device lost it before the upload finished.
+   * Whether the video is stored, waiting in the queue, in transit, or failed.
    */
-  videoStatus: "ready" | "uploading" | "failed";
+  videoStatus: "ready" | "queued" | "uploading" | "failed";
 }
 
 export type ClipPatch = Partial<

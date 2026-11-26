@@ -6,8 +6,10 @@ import type {
   ClipPatch,
   ClipStore,
   Share,
+  SharedClip,
   SharedView,
 } from "./types";
+import { validateVideo } from "./upload";
 
 const DB_NAME = "vertlab";
 const DB_VERSION = 1;
@@ -26,18 +28,17 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
+export function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-function txDone(tx: IDBTransaction): Promise<void> {
+export function txDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Browser storage transaction aborted"));
   });
 }
 
@@ -54,6 +55,21 @@ export function localDay(date = new Date()): string {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+export function newLocalClip(file: File, videoStatus: Clip["videoStatus"]): Clip {
+  const now = new Date();
+  return {
+    id: crypto.randomUUID(),
+    createdAt: now.getTime(),
+    day: localDay(now),
+    title: file.name,
+    mode: "compare",
+    keyframes: [],
+    summary: null,
+    starred: false,
+    videoStatus,
+  };
 }
 
 export class LocalClipStore implements ClipStore {
@@ -92,22 +108,13 @@ export class LocalClipStore implements ClipStore {
   }
 
   async createClip(file: File): Promise<Clip> {
+    const contentType = validateVideo(file);
     const db = await this.db();
-    const now = new Date();
-    const clip: Clip = {
-      id: crypto.randomUUID(),
-      createdAt: now.getTime(),
-      day: localDay(now),
-      title: file.name,
-      mode: "compare",
-      keyframes: [],
-      summary: null,
-      starred: false,
-      videoStatus: "ready",
-    };
+    const clip = newLocalClip(file, "ready");
     const tx = db.transaction(["clips", "videos"], "readwrite");
     tx.objectStore("clips").put(clip);
-    tx.objectStore("videos").put(file, clip.id);
+    const video = file.type === contentType ? file : file.slice(0, file.size, contentType);
+    tx.objectStore("videos").put(video, clip.id);
     await txDone(tx);
     this.emit();
     return clip;
@@ -224,7 +231,7 @@ export class LocalClipStore implements ClipStore {
     const shares = await this.listShares();
     const share = shares.find((s) => s.token === token);
     if (!share) return undefined;
-    const clips = [];
+    const clips: SharedClip[] = [];
     for (const id of share.clipIds) {
       const clip = await this.getClip(id);
       const videoUrl = await this.getVideoUrl(id);

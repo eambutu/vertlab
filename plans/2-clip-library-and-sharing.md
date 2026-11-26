@@ -109,10 +109,19 @@ clients can't choose tokens.
 - Upload with **resumable (TUS) uploads** for videos. Phone slow-mo clips run to
   hundreds of MB. The free plan caps files at 50 MB, so this needs the Pro plan
   with a higher per-file limit, or client-side downscaling later.
-- Save order: insert the clip row right away and open the analyzer on the
-  local file. Upload the video in the background and set `video_path` when it
-  finishes. The library shows "Uploading video…" until then. v1 uses a
-  standard upload; switch to TUS for big files.
+- Save the clip and video to the account's IndexedDB queue first. A single
+  video opens the analyzer, and multi-file imports stay in the library. The
+  production app caches its shell so queued clips can reopen offline.
+- Send cloud videos one at a time when the app can run. Files of 6 MiB or more
+  use TUS and keep their upload URL across reloads. Smaller files use standard
+  uploads. Sync resumes on reconnect or when the app reopens or returns to the
+  foreground. A suspended mobile browser can pause sync.
+- Keep a device copy until the video and clip changes are synced or the clip is
+  deleted. Settings shows the size of the pending video files. Queued work is
+  scoped to the account on this browser. Browser storage limits and clearing
+  site data can affect unsynced work. Synced videos stream from Supabase.
+- The browser console logs these stages under `[vertlab upload]`. Use the
+  batch ID to track a selection and the clip ID to follow an individual upload.
 
 ## Public viewing: `share-view` edge function
 
@@ -135,11 +144,11 @@ even through caches. Signed URLs expire on their own.
 
 | Method | Supabase |
 |---|---|
-| `listClips()` | `select … from clips order by day desc, created_at desc` |
-| `createClip(file, meta)` | insert row → TUS upload → update `video_path` |
-| `updateClip(id, patch)` | update (debounced from the analyzer) |
-| `deleteClip(id)` | delete row + `storage.remove([video, poster])` |
-| `getVideo(id)` | `createSignedUrl(video_path)`, cached in memory |
+| `listClips()` | merge pending local clips with the cloud library |
+| `createClip(file)` | save clip and file in IndexedDB, then insert and upload during sync |
+| `updateClip(id, patch)` | save the change locally, then update the cloud row during sync |
+| `deleteClip(id)` | release the local file and queue removal of the cloud row and video |
+| `getVideoUrl(id)` | play the pending local file or use a signed cloud URL |
 | `shareClip(id)` | `rpc('share_clip')`: reuse the live link or create one |
 | `shareDay(day, clipIds)` | `rpc('share_day')`: upsert the live day link and replace its clips |
 | `stopSharing(shareId)` | `update shares set revoked_at = now()` |
@@ -158,6 +167,13 @@ both have `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; the anon key is
 public by design. Supabase's site URL and redirect list include the live URL
 and localhost.
 
+The local-first upload release only needs a frontend deploy when the existing
+Supabase schema and storage policies are already applied. Check that the target
+Vercel environment has both `VITE_SUPABASE_*` variables before building. After
+deploying, verify that `/service-worker.js` serves JavaScript. On a phone, open
+VertLab online, add a clip offline, reopen the app, and reconnect to check that
+the clip syncs. Supabase's project and bucket limits still apply to the 250 MiB
+per-file limit in the app.
 
 - Share URLs: `/j/:token` (one jump), `/d/:token` (a day), `/d/:token/:n` (a
   jump inside a shared day). The SPA host needs a catch-all rewrite to

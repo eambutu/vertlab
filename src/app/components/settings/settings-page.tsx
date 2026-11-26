@@ -25,6 +25,7 @@ import {
   shareUrl,
   store,
   useClips,
+  usePendingStorageUsage,
   useShares,
   useShowErrors,
   useStorageUsage,
@@ -35,6 +36,7 @@ import type { Clip, Share } from "../../lib/store";
 export function SettingsPage() {
   const shares = useShares();
   const usage = useStorageUsage();
+  const pendingUsage = usePendingStorageUsage();
   const unit = useUnit();
   const showErrors = useShowErrors();
   const auth = useAuth();
@@ -98,6 +100,12 @@ export function SettingsPage() {
               </span>
             </div>
           </ListCard>
+          {!!pendingUsage?.videos && (
+            <p className="px-1 text-xs text-muted-foreground">
+              {fileSize(pendingUsage.bytes)} on this device for {plural(pendingUsage.videos, "video")}.
+              Vertlab frees this space after syncing or deleting the clips.
+            </p>
+          )}
         </section>
 
         <section className="flex flex-col gap-1.5">

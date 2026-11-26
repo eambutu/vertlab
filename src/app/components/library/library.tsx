@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   MoreHorizontal,
@@ -22,8 +22,10 @@ import { Skeleton } from "../ui/skeleton";
 import { cn } from "../ui/utils";
 import { Home } from "../home";
 import { dayHeading, plural } from "../../lib/format";
-import { localDay, store, useClips, useUnit } from "../../lib/store";
+import { isCloudBacked, localDay, store, useClips, useOnline, useUnit } from "../../lib/store";
 import type { Clip } from "../../lib/store";
+import { describeUploadError, logUpload } from "../../lib/store/upload";
+import type { UploaderProps } from "../uploader";
 import { ShareClipDrawer, ShareDayDrawer } from "../share/share-drawers";
 import { DeleteClipDialog } from "./delete-clip-dialog";
 import {
@@ -36,20 +38,65 @@ import {
   modeLabel,
 } from "./parts";
 
-/** Saves a picked video as a new clip and opens it in the analyzer. */
-export function useAddClip() {
+function useAddClips() {
   const navigate = useNavigate();
-  return async (file: File) => {
+  const busy = useRef(false);
+  const mounted = useRef(false);
+  const [adding, setAdding] = useState(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  async function onFiles(files: File[]) {
+    if (!files.length || busy.current) return;
+    busy.current = true;
+    setAdding(true);
+    const batchId = crypto.randomUUID();
+    const context = { batchId, storage: isCloudBacked ? "cloud" : "browser" };
+    let added = 0;
+    let lastClip: Clip | undefined;
+    logUpload("selection received", { ...context, files: files.length });
     try {
-      const clip = await store.createClip(file);
-      navigate(`/clip/${clip.id}`);
-    } catch (e) {
-      console.error(e);
-      toast.error("Couldn't save that video", {
-        description: "Check your connection and try again.",
-      });
+      for (const [index, file] of files.entries()) {
+        const started = performance.now();
+        const details = { ...context, fileNumber: index + 1, bytes: file.size, type: file.type };
+        logUpload("adding clip", details);
+        try {
+          lastClip = await store.createClip(file);
+          added += 1;
+          logUpload("clip added", {
+            ...details, clipId: lastClip.id, videoStatus: lastClip.videoStatus,
+            elapsedMs: Math.round(performance.now() - started),
+          });
+        } catch (error) {
+          const failure = describeUploadError(error);
+          logUpload("add failed", {
+            ...details, ...failure, elapsedMs: Math.round(performance.now() - started),
+          }, "error");
+          toast.error(`Couldn't add ${file.name}`, {
+            description: failure.reason ?? "Check your device storage and try again.",
+        });
+        }
+      }
+      const failed = files.length - added;
+      logUpload("selection processed", { ...context, added, failed });
+      if (files.length === 1 && lastClip && mounted.current) {
+        navigate(`/clip/${lastClip.id}`);
+      } else if (files.length > 1) {
+        toast(`${added} of ${files.length} videos added`, {
+          description: failed ? `${plural(failed, "video")} couldn't be added.` : undefined,
+        });
+      }
+    } finally {
+      busy.current = false;
+      if (mounted.current) setAdding(false);
     }
-  };
+  }
+
+  return { onFiles, adding };
 }
 
 function groupByDay(clips: Clip[]) {
@@ -64,7 +111,7 @@ function groupByDay(clips: Clip[]) {
 
 // On touch screens the tap that picks a menu item can land on the row
 // underneath once the menu closes. Ignore clicks briefly after any menu closes.
-let lastMenuClose = 0;
+let lastMenuClose = -Infinity;
 function noteMenu(open: boolean) {
   if (!open) lastMenuClose = performance.now();
 }
@@ -82,12 +129,13 @@ const ICON_BTN = cn(
   "size-11 rounded-full text-zinc-700 data-[state=open]:bg-zinc-200",
 );
 
-function AddClipButton({ onFile }: { onFile: (f: File) => void }) {
+function AddClipButton({ onFiles, adding }: UploaderProps) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
       <button
         type="button"
+        disabled={adding}
         onClick={() => input.current?.click()}
         className="flex w-full items-center gap-3 rounded-2xl border-[1.5px] border-dashed border-black/25 bg-white/60 px-3.5 py-3 text-left transition-colors hover:border-black/40 hover:bg-white"
       >
@@ -95,24 +143,22 @@ function AddClipButton({ onFile }: { onFile: (f: File) => void }) {
           <Plus className="size-[22px]" strokeWidth={2.2} />
         </span>
         <span className="flex flex-col gap-0.5">
-          <span className="text-[15px] font-semibold">Add a clip to today</span>
-          <span className="text-xs text-muted-foreground">Record or pick a video</span>
+          <span className="text-[15px] font-semibold">
+            {adding ? "Adding videos…" : "Add clips to today"}
+          </span>
+          <span className="text-xs text-muted-foreground">Record or pick videos</span>
         </span>
       </button>
       <input
         ref={input}
         type="file"
-        accept="video/*"
+        accept="video/*,.mp4,.m4v,.mov,.webm"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
+          const files = Array.from(e.target.files ?? []);
           e.target.value = "";
-          if (!f) return;
-          if (!f.type.startsWith("video/")) {
-            toast.error("Use a video file — MP4, MOV, or WebM.");
-            return;
-          }
-          onFile(f);
+          onFiles(files);
         }}
       />
     </>
@@ -131,14 +177,17 @@ function ClipRow({
   const unit = useUnit();
   const picker = useRef<HTMLInputElement>(null);
   const failed = clip.videoStatus === "failed";
+  const hasLocalVideo = failed && store.hasLocalVideo(clip.id);
+  const showFileName = clip.videoStatus !== "ready" || (!clip.summary && !clip.keyframes.length);
 
   async function retry(file?: File) {
     try {
       if (!(await store.retryUpload(clip.id, file))) picker.current?.click();
-    } catch (e) {
-      console.error("[vertlab upload] retry failed to start", e);
+    } catch (error) {
+      const details = describeUploadError(error);
+      logUpload("retry could not start", { clipId: clip.id, ...details }, "error");
       toast.error("Couldn't retry the upload", {
-        description: "Check your connection and try again.",
+        description: details.reason ?? "Check your connection and try again.",
       });
     }
   }
@@ -149,7 +198,7 @@ function ClipRow({
         <input
           ref={picker}
           type="file"
-          accept="video/*"
+          accept="video/*,.mp4,.m4v,.mov,.webm"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -169,8 +218,11 @@ function ClipRow({
             {clip.starred && <StarMark />}
           </span>
           <span className="truncate text-xs text-muted-foreground">
-            {clipSubline(clip)}
+            {showFileName ? clip.title : clipSubline(clip)}
           </span>
+          {clip.videoStatus !== "ready" && (
+            <span className="text-xs text-muted-foreground">{clipSubline(clip)}</span>
+          )}
         </span>
         <Headline clip={clip} unit={unit} />
       </Link>
@@ -186,18 +238,30 @@ function ClipRow({
                 onSelect={() =>
                   // Open the picker inside the tap when there's no copy here;
                   // phones block file pickers opened later.
-                  store.hasLocalVideo(clip.id) ? retry() : picker.current?.click()
+                  hasLocalVideo ? retry() : picker.current?.click()
                 }
               >
                 <RotateCw className="size-[17px]" />
-                {store.hasLocalVideo(clip.id) ? "Retry upload" : "Re-add video…"}
+                {hasLocalVideo ? "Retry upload" : "Re-add video…"}
               </DropdownMenuItem>
+              {hasLocalVideo && (
+                <DropdownMenuItem
+                  className="h-11 rounded-lg px-2.5 text-sm font-medium"
+                  onSelect={() => picker.current?.click()}
+                >
+                  <Plus className="size-[17px]" />
+                  Choose another video…
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator className="mx-1.5" />
             </>
           )}
           <DropdownMenuItem
             className="h-11 rounded-lg px-2.5 text-sm font-medium"
-            onSelect={() => store.updateClip(clip.id, { starred: !clip.starred })}
+            onSelect={() => {
+              void store.updateClip(clip.id, { starred: !clip.starred })
+                .catch(() => toast.error("Couldn't save your changes"));
+            }}
           >
             <Star
               className={cn(
@@ -231,7 +295,8 @@ function ClipRow({
 
 export function Library() {
   const clips = useClips();
-  const addClip = useAddClip();
+  const online = useOnline();
+  const uploader = useAddClips();
   const [sharing, setSharing] = useState<Clip | null>(null);
   const [sharingDay, setSharingDay] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Clip | null>(null);
@@ -249,7 +314,7 @@ export function Library() {
   }
 
   // First run: keep the original landing page as the empty state.
-  if (clips.length === 0) return <Home onFile={addClip} />;
+  if (clips.length === 0) return <Home {...uploader} />;
 
   const today = localDay();
   const days = groupByDay(clips);
@@ -270,6 +335,12 @@ export function Library() {
           <Settings className="size-[21px]" />
         </Link>
       </header>
+
+      {isCloudBacked && !online && (
+        <p role="status" className="px-1 pt-2 text-sm text-muted-foreground">
+          You're offline. Videos saved on this device will sync when you're back online.
+        </p>
+      )}
 
       <div className="flex flex-col gap-[18px] pt-2" onClickCapture={swallowGhostClick}>
         {days.map(([day, dayClips]) => (
@@ -301,7 +372,7 @@ export function Library() {
                 )}
               </div>
             </div>
-            {day === today && <AddClipButton onFile={addClip} />}
+            {day === today && <AddClipButton {...uploader} />}
             {dayClips.length > 0 && (
               <ListCard>
                 {dayClips.map((c) => (
@@ -319,7 +390,7 @@ export function Library() {
       </div>
 
       <ShareClipDrawer
-        clip={sharing}
+        clip={clips.find((clip) => clip.id === sharing?.id) ?? null}
         open={!!sharing}
         onOpenChange={(o) => !o && setSharing(null)}
       />

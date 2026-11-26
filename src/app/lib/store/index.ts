@@ -25,19 +25,22 @@ function useStoreQuery<T>(load: () => Promise<T>, deps: unknown[]) {
   const run = useCallback(load, deps);
   useEffect(() => {
     let alive = true;
-    const refresh = () =>
-      run()
+    let latest = 0;
+    const refresh = () => {
+      const request = ++latest;
+      return run()
         .then((d) => {
-          if (alive) setData(d);
+          if (alive && request === latest) setData(d);
         })
         .catch((e) => {
+          if (!alive || request !== latest) return;
           console.error(e);
-          if (alive)
-            toast.error("Couldn't load your library", {
-              id: "store-error",
-              description: "Check your connection and reload.",
-            });
+          toast.error("Couldn't load your library", {
+            id: "store-error",
+            description: "Check your connection and reload.",
+          });
         });
+    };
     refresh();
     const unsub = store.subscribe(refresh);
     return () => {
@@ -62,6 +65,26 @@ export function useClip(id: string | undefined) {
 /** Reloads with the library, so adding or deleting a clip updates it. */
 export function useStorageUsage(): StorageUsage | null | undefined {
   return useStoreQuery(() => store.storageUsage(), []);
+}
+
+export function usePendingStorageUsage(): StorageUsage | null | undefined {
+  return useStoreQuery(
+    () => store instanceof SupabaseClipStore ? store.pendingStorageUsage() : Promise.resolve(null),
+    [],
+  );
+}
+
+function subscribeConnection(listener: () => void) {
+  window.addEventListener("online", listener);
+  window.addEventListener("offline", listener);
+  return () => {
+    window.removeEventListener("online", listener);
+    window.removeEventListener("offline", listener);
+  };
+}
+
+export function useOnline() {
+  return useSyncExternalStore(subscribeConnection, () => navigator.onLine, () => true);
 }
 
 export function useShares(): Share[] | undefined {

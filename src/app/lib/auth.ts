@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "./supabase";
+import { isAuthRetryableFetchError, type Session } from "@supabase/supabase-js";
+import { AUTH_STORAGE_KEY, supabase } from "./supabase";
 
 export type AuthState =
   | { status: "loading" }
   | { status: "signed-out" }
-  | { status: "signed-in"; email?: string };
+  | { status: "signed-in"; email?: string; userId?: string };
 
 // Without a backend there are no accounts; the app behaves as signed in.
 let state: AuthState = supabase ? { status: "loading" } : { status: "signed-in" };
@@ -17,16 +17,28 @@ function fromSession(session: Session | null): AuthState {
     supabase?.auth.signOut();
     return { status: "signed-out" };
   }
-  return session
-    ? { status: "signed-in", email: session.user.email ?? undefined }
+  return session?.user?.id
+    ? { status: "signed-in", email: session.user.email ?? undefined, userId: session.user.id }
     : { status: "signed-out" };
+}
+
+function savedDeviceAccount(): AuthState {
+  // The locally remembered identity only unlocks that account's on-device queue.
+  // Supabase still verifies current credentials before every cloud operation.
+  try {
+    const session = AUTH_STORAGE_KEY && JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) ?? "null");
+    if (session?.user && !session.user.is_anonymous) return fromSession(session);
+  } catch {
+    // Browser storage can be unavailable.
+  }
+  return { status: "signed-out" };
 }
 
 function set(next: AuthState) {
   if (
     next.status === state.status &&
-    (next.status !== "signed-in" ||
-      next.email === (state as { email?: string }).email)
+    (next.status !== "signed-in" || (state.status === "signed-in" &&
+      next.userId === state.userId && next.email === state.email))
   )
     return;
   state = next;
@@ -46,19 +58,28 @@ export function takeLinkError(): string | null {
 }
 
 if (supabase) {
-  supabase.auth.getSession().then(({ data }) => set(fromSession(data.session)));
-  supabase.auth.onAuthStateChange((_event, session) => set(fromSession(session)));
+  if (!navigator.onLine) set(savedDeviceAccount());
+  let receivedAuthChange = false;
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "INITIAL_SESSION") return;
+    receivedAuthChange = true;
+    set(fromSession(session));
+  });
+  void supabase.auth.getSession().then(({ data, error }) => {
+    if (receivedAuthChange) return;
+    set(isAuthRetryableFetchError(error) ? savedDeviceAccount() : fromSession(data.session));
+  });
+}
+
+export function getAuth() { return state; }
+
+export function subscribeAuth(listener: () => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
 }
 
 export function useAuth(): AuthState {
-  return useSyncExternalStore(
-    (l) => {
-      listeners.add(l);
-      return () => listeners.delete(l);
-    },
-    () => state,
-    () => state,
-  );
+  return useSyncExternalStore(subscribeAuth, getAuth, getAuth);
 }
 
 /** Turns Supabase auth errors into copy for the sign-in page. */

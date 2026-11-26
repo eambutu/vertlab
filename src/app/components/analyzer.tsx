@@ -36,6 +36,7 @@ import {
 import { ShareClipDrawer } from "./share/share-drawers";
 import { DeleteClipDialog } from "./library/delete-clip-dialog";
 import { store, useShowErrors } from "../lib/store";
+import { logUpload } from "../lib/store/upload";
 import type { Clip } from "../lib/store";
 import {
   CUSTOM_LABEL_MAX,
@@ -123,6 +124,7 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
   const [fps, setFps] = useState(clip.fps ?? 30);
   const showErrors = useShowErrors();
   const [detecting, setDetecting] = useState(true);
+  const [playbackError, setPlaybackError] = useState<number>();
   const [aspect, setAspect] = useState(
     clip.width && clip.height ? clip.width / clip.height : 16 / 9,
   );
@@ -471,12 +473,28 @@ export function Analyzer({ clip, videoUrl: url }: AnalyzerProps) {
               })
               .finally(() => setDetecting(false));
           }}
+          onError={(event) => {
+            const video = event.currentTarget;
+            const code = video.error?.code ?? 0;
+            logUpload("video playback failed", {
+              clipId: clip.id, code, source: url.startsWith("blob:") ? "local" : "cloud",
+              readyState: video.readyState,
+            }, "error");
+            setPlaybackError(code);
+            setDetecting(false);
+          }}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onClick={togglePlay}
         />
         {/* Masks the brief playback used to measure the frame rate. */}
-        {detecting && (
+        {playbackError !== undefined ? (
+          <p role="alert" className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-white">
+            {playbackError === 3 || playbackError === 4
+              ? "This video couldn't be decoded. Try exporting it as an H.264 MP4."
+              : "Couldn't play this video. Try reopening it from the library."}
+          </p>
+        ) : detecting && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black text-sm text-white/80">
             <Loader2 className="size-4 animate-spin" />
             {clip.keyframes.length ? "Loading your keyframes…" : "Analyzing video…"}
