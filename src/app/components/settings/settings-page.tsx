@@ -214,8 +214,7 @@ export function SharedLinksPage() {
     <Page>
       <BackHeader to="/settings" label="Back to settings" title="Shared links" />
       <p className="px-1 pb-3.5 text-[13px] text-muted-foreground">
-        Everything anyone can open right now. Stopping a link breaks it
-        immediately.
+        Day links open the selected session and let viewers browse your other shared days.
       </p>
 
       {shares && groups.length === 0 && (

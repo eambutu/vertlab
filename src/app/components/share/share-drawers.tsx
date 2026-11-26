@@ -240,8 +240,7 @@ export function ShareDayDrawer({
                 className="border-0 bg-zinc-100"
               />
               <p className="-mt-1.5 text-xs text-muted-foreground">
-                {included.length} of {ordered.length} jumps · anyone with the link
-                can watch
+                {included.length} of {ordered.length} jumps included. Anyone with this link can browse your other shared days.
               </p>
 
               <StopSharingButton

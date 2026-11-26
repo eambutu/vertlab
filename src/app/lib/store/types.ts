@@ -76,6 +76,8 @@ export interface SharedView {
   kind: "clip" | "day";
   day?: string;
   clips: SharedClip[];
+  /** Only present on a coach library link. Newest first. */
+  sharedDays?: string[];
   /** For a single-jump link: an active day link from the same owner that includes it. */
   partOf?: { token: string; day: string; count: number };
 }
@@ -105,7 +107,7 @@ export interface ClipStore {
   shareDay(day: string, clipIds: string[]): Promise<Share>;
   stopSharing(shareId: string): Promise<void>;
   /** Anonymous lookup by token. Undefined if missing or stopped. */
-  openShare(token: string): Promise<SharedView | undefined>;
+  openShare(token: string, day?: string): Promise<SharedView | undefined>;
 
   /** Called after any change; returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
