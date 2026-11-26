@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "../../lib/auth";
 import { SignInPage } from "./sign-in-page";
@@ -14,5 +14,5 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     );
   }
   if (auth.status === "signed-out") return <SignInPage />;
-  return <>{children}</>;
+  return <Fragment key={auth.userId}>{children}</Fragment>;
 }

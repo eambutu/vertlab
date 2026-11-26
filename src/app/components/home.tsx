@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { Cloud, Settings, Timer } from "lucide-react";
 import { buttonVariants } from "./ui/button";
 import { cn } from "./ui/utils";
-import { Uploader } from "./uploader";
+import { Uploader, type UploaderProps } from "./uploader";
 import { isCloudBacked } from "../lib/store";
 
 function Mark() {
@@ -67,28 +67,26 @@ export function HeroShell({
   );
 }
 
-export function Home({ onFile }: { onFile: (file: File) => void }) {
+export function Home(props: UploaderProps) {
   return (
     <HeroShell
       corner={
-        isCloudBacked && (
-          <Link
-            to="/settings"
-            aria-label="Settings"
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "icon" }),
-              "size-11 rounded-full text-zinc-700",
-            )}
-          >
-            <Settings className="size-[21px]" />
-          </Link>
-        )
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            "size-11 rounded-full text-zinc-700",
+          )}
+        >
+          <Settings className="size-[21px]" />
+        </Link>
       }
       footer={
         isCloudBacked ? (
           <>
             <Cloud className="size-3.5" />
-            Clips are saved to your library automatically
+            Clips are saved on this device first and sync when you're online
           </>
         ) : (
           <>
@@ -98,7 +96,7 @@ export function Home({ onFile }: { onFile: (file: File) => void }) {
         )
       }
     >
-      <Uploader onFile={onFile} />
+      <Uploader {...props} />
     </HeroShell>
   );
 }

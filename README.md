@@ -18,3 +18,22 @@
   The schema, storage rules and the public `share-view` function live in
   `supabase/`. Setup, deploy steps and design notes are in
   `plans/2-clip-library-and-sharing.md`.
+
+  ## Upload and playback diagnostics
+
+  Reproduce the issue, then choose **Send error report** on the video error
+  screen or under **Settings → Diagnostics**. When signed in, the app saves
+  the latest 300 upload and playback events to Supabase and shows a report ID.
+  Give that ID to the person or agent helping you. The diagnostics include
+  timestamps, browser information, clip and attempt IDs, and technical error
+  details. They exclude videos, filenames, account details, and share or
+  signed URLs.
+
+  To retrieve a report, use an authorized connection to the VertLab Supabase
+  project and query `public.error_reports` by its UUID, selecting
+  `id`, `created_at`, and `diagnostics`. Signed-in users can read their own
+  reports through Supabase Auth. For agents, a database administrator can
+  grant the `vertlab_report_reader` role to a dedicated database login and
+  configure that connection securely in the agent environment. The role
+  can read report IDs, timestamps, and diagnostics. Apply the database
+  migrations before releasing the app.

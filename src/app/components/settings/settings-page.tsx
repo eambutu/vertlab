@@ -4,6 +4,7 @@ import { signOut, useAuth } from "../../lib/auth";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { Button } from "../ui/button";
+import { ErrorReport } from "../error-report";
 import { Switch } from "../ui/switch";
 import { SuggestKeyframesSetting } from "../../features/keyframe-suggest/flag";
 import {
@@ -25,6 +26,7 @@ import {
   shareUrl,
   store,
   useClips,
+  usePendingStorageUsage,
   useShares,
   useShowErrors,
   useStorageUsage,
@@ -35,6 +37,7 @@ import type { Clip, Share } from "../../lib/store";
 export function SettingsPage() {
   const shares = useShares();
   const usage = useStorageUsage();
+  const pendingUsage = usePendingStorageUsage();
   const unit = useUnit();
   const showErrors = useShowErrors();
   const auth = useAuth();
@@ -98,6 +101,12 @@ export function SettingsPage() {
               </span>
             </div>
           </ListCard>
+          {!!pendingUsage?.videos && (
+            <p className="px-1 text-xs text-muted-foreground">
+              {fileSize(pendingUsage.bytes)} on this device for {plural(pendingUsage.videos, "video")}.
+              Vertlab frees this space after syncing or deleting the clips.
+            </p>
+          )}
         </section>
 
         <section className="flex flex-col gap-1.5">
@@ -146,6 +155,14 @@ export function SettingsPage() {
               />
             </label>
           </ListCard>
+        </section>
+
+        <section className="flex flex-col items-start gap-2">
+          <SectionLabel>Diagnostics</SectionLabel>
+          <p className="px-1 text-xs text-muted-foreground">
+            Send the latest 300 upload and playback events to help diagnose a problem.
+          </p>
+          <ErrorReport />
         </section>
 
         <section className="flex flex-col gap-1.5">
