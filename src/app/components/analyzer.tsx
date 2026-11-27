@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   Camera,
@@ -53,12 +53,8 @@ import {
   SUGGEST_MODES,
   useSuggestKeyframes,
 } from "../features/keyframe-suggest/flag";
-import type { CaptureHook } from "../features/keyframe-suggest/suggest-keyframes";
-
-// Labs: suggested keyframes, only downloaded when the setting is on.
-const SuggestKeyframes = lazy(
-  () => import("../features/keyframe-suggest/suggest-keyframes"),
-);
+import SuggestKeyframes, { type CaptureHook } from "../features/keyframe-suggest/suggest-keyframes";
+import { logDiagnostic } from "../lib/diagnostics";
 
 import { ANALYSIS_OPTIONS, COMPARE_MODE, MODE_STORAGE_KEY } from "../lib/exercise-types";
 
@@ -77,8 +73,7 @@ interface AnalyzerProps {
 const POSTER_WIDTH = 240;
 const SAVE_DEBOUNCE_MS = 400;
 
-// Fixed downscale width for diff comparisons (keeps all frames aligned & fast).
-const DIFF_WIDTH = 160;
+const THUMB_MAX_EDGE = 480;
 
 export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   const navigate = useNavigate();
@@ -136,40 +131,27 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const diffHeight = useCallback(() => {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth) return Math.round((DIFF_WIDTH * 9) / 16);
-    return Math.round((DIFF_WIDTH * v.videoHeight) / v.videoWidth);
-  }, []);
+  const thumbnailCanvas = useRef<HTMLCanvasElement | null>(null);
 
-  /** Grab the current video frame into a Keyframe (thumbnail + diff data). */
+  /** Reuse one drawing surface, especially for long portrait RSI sequences. */
   const grabFrame = useCallback((): Keyframe | null => {
     const v = videoRef.current;
-    if (!v || !v.videoWidth) return null;
-
-    // Thumbnail at a readable size.
-    const thumbW = Math.min(480, v.videoWidth);
-    const thumbH = Math.round((thumbW * v.videoHeight) / v.videoWidth);
-    const tc = document.createElement("canvas");
-    tc.width = thumbW;
-    tc.height = thumbH;
-    tc.getContext("2d")!.drawImage(v, 0, 0, thumbW, thumbH);
-
-    // Small fixed-size buffer for diffing.
-    const dh = diffHeight();
-    const dc = document.createElement("canvas");
-    dc.width = DIFF_WIDTH;
-    dc.height = dh;
-    const dctx = dc.getContext("2d", { willReadFrequently: true })!;
-    dctx.drawImage(v, 0, 0, DIFF_WIDTH, dh);
-
+    if (!v || !v.videoWidth || !v.videoHeight) return null;
+    const scale = Math.min(1, THUMB_MAX_EDGE / Math.max(v.videoWidth, v.videoHeight));
+    const width = Math.max(1, Math.round(v.videoWidth * scale));
+    const height = Math.max(1, Math.round(v.videoHeight * scale));
+    const canvas = thumbnailCanvas.current ??= document.createElement("canvas");
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Frame capture unavailable");
+    ctx.drawImage(v, 0, 0, width, height);
     return {
       id: `${v.currentTime.toFixed(4)}-${Math.random().toString(36).slice(2, 7)}`,
       time: v.currentTime,
-      thumbUrl: tc.toDataURL("image/jpeg", 0.85),
-      imageData: dctx.getImageData(0, 0, DIFF_WIDTH, dh),
+      thumbUrl: canvas.toDataURL("image/jpeg", 0.85),
     };
-  }, [diffHeight]);
+  }, []);
 
   /** Seek and wait for the frame to be ready to draw. */
   const seekAndWait = useCallback(
@@ -330,9 +312,10 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   );
 
   const changeMode = useCallback((id: string) => {
+    logDiagnostic("app", "analysis mode changed", { clipId: clip.id, mode: id, frames: keyframes.length });
     setSelected([]); // switching analysis type resets the comparison selection
     setAnalysisMode(id);
-  }, []);
+  }, [clip.id, keyframes.length]);
 
   const removeKeyframe = useCallback((id: string) => {
     setKeyframes((prev) => prev.filter((k) => k.id !== id));
@@ -526,17 +509,15 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
       </Button>
 
       {suggestOn && SUGGEST_MODES.includes(analysisMode) && !detecting && (
-        <Suspense fallback={null}>
-          <SuggestKeyframes
-            videoUrl={url}
-            mode={analysisMode}
-            fps={fps}
-            keyframeCount={keyframes.length}
-            seekTo={seekTo}
-            captureHook={captureHook}
-            onApply={applyKeyframeTimes}
-          />
-        </Suspense>
+        <SuggestKeyframes
+          videoUrl={url}
+          mode={analysisMode}
+          fps={fps}
+          keyframeCount={keyframes.length}
+          seekTo={seekTo}
+          captureHook={captureHook}
+          onApply={applyKeyframeTimes}
+        />
       )}
 
       {/* Keyframes */}

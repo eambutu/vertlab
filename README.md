@@ -23,11 +23,11 @@
 
   Reproduce the issue, then choose **Send error report** on the video error
   screen or under **Settings → Diagnostics**. When signed in, the app saves
-  the latest 300 upload and playback events to Supabase and shows a report ID.
+  the latest 300 upload, playback, and app events to Supabase and shows a report ID.
   Give that ID to the person or agent helping you. The diagnostics include
-  timestamps, browser information, clip and attempt IDs, and technical error
-  details. They exclude videos, filenames, account details, and share or
-  signed URLs.
+  timestamps, browser information, clip and attempt IDs, analysis mode changes,
+  and the compiled file and position of a screen-rendering error. They exclude
+  videos, filenames, account details, and share or signed URLs.
 
   To retrieve a report, use an authorized connection to the VertLab Supabase
   project and query `public.error_reports` by its UUID, selecting

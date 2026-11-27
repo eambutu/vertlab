@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
-import { findKeyframes, type SuggestedEvent } from "./finder";
+import type { SuggestedEvent } from "./finder";
 import { ConfirmSheet } from "./confirm-sheet";
 
 /** Called with the time of a hand-captured frame; return true to claim it. */
@@ -78,7 +78,11 @@ export default function SuggestKeyframes({
     setProgress({ stage: "Starting", fraction: 0 });
     const controller = new AbortController();
     abort.current = controller;
+    let finderLoaded = false;
     try {
+      const { findKeyframes } = await import("./finder");
+      if (controller.signal.aborted) return;
+      finderLoaded = true;
       const result = await findKeyframes({
         url: videoUrl,
         mode,
@@ -104,9 +108,10 @@ export default function SuggestKeyframes({
         setPhase("review");
       }
     } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") return;
+      if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
       console.error(e);
-      setError("Something went wrong while reading the video.");
+      setError(finderLoaded ? "Something went wrong while reading the video."
+        : "Couldn’t load the keyframe finder. You can still mark frames by hand.");
       setPhase("idle");
     }
   }
