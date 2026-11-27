@@ -172,9 +172,11 @@ export function modeLabel(clip: Pick<Clip, "mode">) {
 /** Second line under the mode: the result detail, or what's still missing. */
 export function clipSubline(clip: Clip | SharedClip): string {
   if ("videoStatus" in clip && clip.videoStatus === "queued")
-    return "Saved on this device · waiting to sync";
+    return "Queued · saved on this device";
   if ("videoStatus" in clip && clip.videoStatus === "uploading")
-    return "Uploading video…";
+    return clip.uploadPercent === undefined ? "Uploading video…" : `Uploading · ${clip.uploadPercent}%`;
+  if ("videoStatus" in clip && clip.videoStatus === "retrying")
+    return clip.uploadPercent ? `Waiting to retry · ${clip.uploadPercent}% saved` : "Waiting to retry";
   if ("videoStatus" in clip && clip.videoStatus === "failed")
     return "Video didn't finish uploading";
   if (clip.summary) return clip.summary.sub;

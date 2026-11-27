@@ -21,7 +21,8 @@ export interface Clip {
   /**
    * Whether the video is stored, waiting in the queue, in transit, or failed.
    */
-  videoStatus: "ready" | "queued" | "uploading" | "failed";
+  videoStatus: "ready" | "queued" | "uploading" | "retrying" | "failed";
+  uploadPercent?: number;
 }
 
 export type ClipPatch = Partial<

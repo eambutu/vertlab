@@ -28,6 +28,20 @@ import {
 const BUCKET = "clips";
 const SIGNED_URL_SECONDS = 60 * 60;
 const RESUMABLE_THRESHOLD_BYTES = 6 * 1024 * 1024;
+const MAX_UPLOAD_FAILURES = 5;
+
+function afterSyncFailure(current: ClipJob, attempted: ClipJob, transient: boolean): ClipJob {
+  const advanced = (current.video?.confirmedBytes ?? 0) > (attempted.video?.confirmedBytes ?? 0);
+  const previous = advanced ? 0 : current.consecutiveFailures ?? 0;
+  const failures = navigator.onLine ? previous + 1 : previous;
+  const failed = !transient || (!!current.video && failures >= MAX_UPLOAD_FAILURES);
+  const delay = Math.min(60_000, 5_000 * 2 ** Math.max(0, Math.min(4, failures - 1)));
+  return {
+    ...current, failed, consecutiveFailures: failures,
+    retryAt: failed ? undefined : Date.now() + delay,
+    video: current.video && { ...current.video, uploading: false },
+  };
+}
 
 function checkCloudError(result: { error: object | null; status: number }) {
   if (result.error) throw Object.assign(result.error, { status: result.status });
@@ -88,11 +102,11 @@ export class SupabaseClipStore implements ClipStore {
   private libraryLoaded = false;
   private libraryRequest?: Promise<void>;
   private libraryRevision = 0;
-  private activeClipId?: string;
+  private activeUpload?: { id: string; scope: string; controller: AbortController };
   private syncController?: AbortController;
   private syncTimer?: number;
   private syncRequested = false;
-  private retryDelay = 5_000;
+  private syncDue = Infinity;
   private signedUrls = new Map<string, { url: string; expires: number }>();
   private channel = typeof BroadcastChannel === "undefined"
     ? undefined
@@ -122,16 +136,15 @@ export class SupabaseClipStore implements ClipStore {
       this.libraryLoaded = false;
       this.libraryRevision++;
       this.libraryRequest = undefined;
-      this.activeClipId = undefined;
       this.signedUrls.clear();
-      this.retryDelay = 5_000;
       resume();
     };
     subscribeAuth(accountChanged);
     this.channel?.addEventListener("message", ({ data }) => {
       if (!this.userId || data?.scope !== this.scope(this.userId)) return;
+      if (data.deletedId) this.cancelUpload(data.scope, data.deletedId);
       if (data.runSync) this.scheduleSync();
-      else this.invalidateLibrary();
+      else if (!data.progress) this.invalidateLibrary();
       this.emit();
     });
     window.addEventListener("online", resume);
@@ -166,9 +179,9 @@ export class SupabaseClipStore implements ClipStore {
     this.listeners.forEach((listener) => listener());
   }
 
-  private changed(scope: string, runSync = false) {
+  private changed(scope: string, runSync = false, deletedId?: string) {
     this.emit();
-    this.channel?.postMessage({ scope, runSync });
+    this.channel?.postMessage({ scope, runSync, deletedId });
     if (runSync) this.scheduleSync();
   }
 
@@ -228,11 +241,14 @@ export class SupabaseClipStore implements ClipStore {
     if (job.deletePaths || !job.clip) return undefined;
     let videoStatus = job.clip.videoStatus;
     if (job.video) {
-      videoStatus = this.activeClipId === job.id ? "uploading" : "queued";
+      videoStatus = job.video.uploading && navigator.onLine ? "uploading" : job.retryAt ? "retrying" : "queued";
       if (job.failed) videoStatus = "failed";
     }
     const clip = job.create ? job.clip : this.cloudClips.get(job.id) ?? job.clip;
-    return { ...clip, ...job.patch, videoStatus };
+    const bytes = job.video?.confirmedBytes;
+    const uploadPercent = bytes !== undefined && job.video?.size
+      ? Math.floor(100 * bytes / job.video.size) : undefined;
+    return { ...clip, ...job.patch, videoStatus, uploadPercent };
   }
 
   private async fetchPage(userId: string, from: string, before?: string): Promise<LibraryPage> {
@@ -425,7 +441,7 @@ export class SupabaseClipStore implements ClipStore {
       if (current?.deletePaths || (!file && (!current?.video || current.video.missing))) return current;
       return {
         id: clipId, scope, clip, queuedAt: Date.now(), ...current,
-        revision: crypto.randomUUID(), failed: false,
+        revision: crypto.randomUUID(), failed: false, retryAt: undefined, consecutiveFailures: 0,
         video: file && contentType
           ? this.videoFor(userId, clipId, file, contentType, current?.video?.path)
           : current?.video,
@@ -438,9 +454,15 @@ export class SupabaseClipStore implements ClipStore {
   }
 
   private scheduleSync(delay = 0) {
-    window.clearTimeout(this.syncTimer);
     if (!this.userId || !navigator.onLine) return;
-    this.syncTimer = window.setTimeout(() => this.startSync(), delay);
+    const due = Date.now() + delay;
+    if (this.syncDue <= due) return;
+    window.clearTimeout(this.syncTimer);
+    this.syncDue = due;
+    this.syncTimer = window.setTimeout(() => {
+      this.syncDue = Infinity;
+      this.startSync();
+    }, delay);
   }
 
   private startSync() {
@@ -470,41 +492,70 @@ export class SupabaseClipStore implements ClipStore {
 
   private async drain(userId: string, signal: AbortSignal) {
     const scope = this.scope(userId);
-    const jobs = (await listJobs(scope)).sort((a, b) => a.queuedAt - b.queuedAt);
-    let retry = false;
+    // Give new work a turn before retrying a previously stalled file.
+    const jobs = (await listJobs(scope)).sort((a, b) =>
+      Number(!!a.retryAt) - Number(!!b.retryAt) || a.queuedAt - b.queuedAt);
+    let nextRetry = Infinity;
     for (const queued of jobs) {
       if (signal.aborted || !navigator.onLine) break;
       const job = await getJob(scope, queued.id);
       if (!job || job.failed) continue;
+      if (job.retryAt && job.retryAt > Date.now()) {
+        nextRetry = Math.min(nextRetry, job.retryAt);
+        continue;
+      }
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
       try {
-        await this.accessToken(userId);
         signal.throwIfAborted();
-        this.activeClipId = job.id;
-        this.emit();
-        await this.syncJob(job, userId, signal);
+        const videoId = job.video?.id;
+        if (videoId) {
+          this.activeUpload = { id: job.id, scope, controller };
+          const started = await changeJob(scope, job.id, current => current?.video?.id === videoId
+            ? { ...current, video: { ...current.video, uploading: true } } : current);
+          if (!started?.video || started.video.id !== videoId) continue;
+          this.notifyProgress(scope);
+        }
+        await this.accessToken(userId);
+        controller.signal.throwIfAborted();
+        await this.syncJob(job, userId, controller.signal);
       } catch (error) {
         if (signal.aborted) return;
+        if (controller.signal.aborted) continue; // Deleted while this tab was sending.
         const details = describeUploadError(error);
-        const again = !navigator.onLine || shouldRetry(error, details.status);
-        retry ||= again;
-        logUpload("sync failed", { clipId: job.id, retry: again, ...details }, again ? "warn" : "error");
-        if (!again) {
-          await changeJob(scope, job.id, (current) => current?.revision === job.revision
-            ? { ...current, failed: true } : current);
+        const transient = !navigator.onLine || shouldRetry(error, details.status);
+        const updated = await changeJob(scope, job.id, current => {
+          if (!current || current.video?.id !== job.video?.id ||
+              !!current.deletePaths !== !!job.deletePaths) return current;
+          if (!job.video && current.revision !== job.revision) return current;
+          return afterSyncFailure(current, job, transient);
+        });
+        if (updated?.retryAt) nextRetry = Math.min(nextRetry, updated.retryAt);
+        logUpload("sync failed", { clipId: job.id, retry: !!updated?.retryAt, ...details },
+          updated?.failed ? "error" : "warn");
+        if (updated?.failed) {
           toast.error(job.video ? `Couldn't upload ${job.clip?.title ?? "video"}` : "Couldn't sync a clip", {
             description: details.reason ?? "Your changes are still saved on this device.",
           });
         }
+        this.notifyProgress(scope);
       } finally {
-        if (this.activeClipId === job.id) this.activeClipId = undefined;
-        this.emit();
+        signal.removeEventListener("abort", abort);
+        this.activeUpload = undefined;
       }
     }
-    if (retry && !signal.aborted) {
-      this.scheduleSync(this.retryDelay);
-      this.retryDelay = Math.min(this.retryDelay * 2, 60_000);
-    } else {
-      this.retryDelay = 5_000;
+    if (Number.isFinite(nextRetry) && !signal.aborted) this.scheduleSync(Math.max(0, nextRetry - Date.now()));
+  }
+
+  private notifyProgress(scope: string) {
+    this.emit();
+    this.channel?.postMessage({ scope, progress: true });
+  }
+
+  private cancelUpload(scope: string, id: string) {
+    if (this.activeUpload?.scope === scope && this.activeUpload.id === id) {
+      this.activeUpload.controller.abort();
     }
   }
 
@@ -512,13 +563,27 @@ export class SupabaseClipStore implements ClipStore {
     const { scope, id, video } = job;
     if (job.deletePaths) {
       await this.syncDeletion(job, userId, signal);
-      await this.finishJob(job);
+      if (!await this.finishJob(job)) return;
       if (this.userId === userId) {
         this.cloudClips.delete(id);
         this.invalidateLibrary();
       }
       this.changed(scope);
       return;
+    }
+    // A different device can delete a clip while this device is waiting to resume.
+    if (video && !job.create && (job.retryAt || video.uploadUrl)) {
+      const record = await this.sb.from("clips").select("id")
+        .eq("id", id).eq("user_id", userId).abortSignal(signal).maybeSingle();
+      checkCloudError(record);
+      if (!record.data) {
+        await this.removeVideos([video.path]);
+        if (!await this.finishJob(job)) return;
+        this.cloudClips.delete(id);
+        this.invalidateLibrary();
+        this.changed(scope);
+        return;
+      }
     }
     if (job.create && job.clip) {
       const { createdAt, day, title } = job.clip;
@@ -555,19 +620,26 @@ export class SupabaseClipStore implements ClipStore {
     const result = await query.abortSignal(signal).maybeSingle();
     checkCloudError(result);
     if (!result.data && video) await this.removeVideos([video.path]);
-    await this.finishJob(current);
+    signal.throwIfAborted();
+    if (!await this.finishJob(current)) return; // A newer edit or deletion is pending.
     if (this.userId === userId) {
       if (result.data) this.cloudClips.set(id, this.toClip(result.data as ClipRow));
       else this.cloudClips.delete(id);
       this.invalidateLibrary();
       this.signedUrls.delete(id);
     }
-    logUpload("clip synced", { clipId: id });
+    if (result.data) logUpload("clip synced", { clipId: id });
     this.changed(scope);
   }
 
   private async finishJob(job: ClipJob) {
-    await changeJob(job.scope, job.id, (current) => current?.revision === job.revision ? undefined : current);
+    let removed = false;
+    await changeJob(job.scope, job.id, current => {
+      if (current?.revision !== job.revision) return current;
+      removed = true;
+      return undefined;
+    });
+    return removed;
   }
 
   private async transfer(job: ClipJob, video: PendingVideo, file: Blob, userId: string, signal: AbortSignal) {
@@ -581,16 +653,32 @@ export class SupabaseClipStore implements ClipStore {
         projectUrl: this.url, anonKey: this.anonKey, bucket: BUCKET,
         clipId, path, file, contentType, signal, uploadUrl: video.uploadUrl,
         getAccessToken: () => this.accessToken(userId),
-        saveUploadUrl: async (uploadUrl) => {
-          await changeJob(scope, clipId, (current) => current?.video?.id === video.id
-            ? { ...current, video: { ...current.video, uploadUrl } } : current);
+        saveCheckpoint: async (uploadUrl, confirmedBytes) => {
+          const saved = await changeJob(scope, clipId, current => current?.video?.id === video.id
+            ? { ...current, video: { ...current.video, uploadUrl, confirmedBytes } } : current);
+          if (saved?.video?.id !== video.id) {
+            this.cancelUpload(scope, clipId);
+            signal.throwIfAborted();
+          }
+          this.notifyProgress(scope);
         },
       });
     } else {
       signal.throwIfAborted();
-      const body = file.type === contentType ? file : file.slice(0, file.size, contentType);
-      const { error } = await this.sb.storage.from(BUCKET).upload(path, body, { upsert: true });
-      if (error) throw error;
+      // The storage SDK's upload method does not forward an AbortSignal.
+      const token = await this.accessToken(userId);
+      const response = await fetch(`${this.url}/storage/v1/object/${BUCKET}/${path}`, {
+        method: "POST", body: file,
+        headers: { apikey: this.anonKey, Authorization: `Bearer ${token}`,
+          "Content-Type": contentType, "x-upsert": "true", "cache-control": "max-age=3600" },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]),
+      });
+      if (!response.ok) {
+        const details = await response.json().catch(() => ({}));
+        throw Object.assign(new Error(details.message || "Video upload failed"), {
+          status: Number(details.statusCode) || response.status,
+        });
+      }
     }
   }
 
@@ -615,9 +703,10 @@ export class SupabaseClipStore implements ClipStore {
       id, scope, queuedAt: Date.now(), revision: crypto.randomUUID(),
       deletePaths: current?.deletePaths ?? (current?.video ? [current.video.path] : []),
     }));
+    this.cancelUpload(scope, id);
     this.localVideoIds.delete(id);
     this.signedUrls.delete(id);
-    this.changed(scope, true);
+    this.changed(scope, true, id);
   }
 
   private async syncDeletion(job: ClipJob, userId: string, signal: AbortSignal) {
