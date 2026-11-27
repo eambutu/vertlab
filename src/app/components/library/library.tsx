@@ -29,13 +29,9 @@ import type { UploaderProps } from "../uploader";
 import { ShareClipDrawer, ShareDayDrawer } from "../share/share-drawers";
 import { DeleteClipDialog } from "./delete-clip-dialog";
 import {
-  ClipThumb,
-  Headline,
+  ClipRowLink,
   ListCard,
   Page,
-  StarMark,
-  clipSubline,
-  modeLabel,
 } from "./parts";
 
 function useAddClips() {
@@ -178,7 +174,6 @@ function ClipRow({
   const picker = useRef<HTMLInputElement>(null);
   const failed = clip.videoStatus === "failed";
   const hasLocalVideo = failed && store.hasLocalVideo(clip.id);
-  const showFileName = clip.videoStatus !== "ready" || (!clip.summary && !clip.keyframes.length);
 
   async function retry(file?: File) {
     try {
@@ -207,25 +202,7 @@ function ClipRow({
           }}
         />
       )}
-      <Link
-        to={`/clip/${clip.id}`}
-        className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 outline-none focus-visible:bg-zinc-50"
-      >
-        <ClipThumb clip={clip} />
-        <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-          <span className="flex items-center gap-1.5 text-sm font-medium">
-            {modeLabel(clip)}
-            {clip.starred && <StarMark />}
-          </span>
-          <span className="truncate text-xs text-muted-foreground">
-            {showFileName ? clip.title : clipSubline(clip)}
-          </span>
-          {clip.videoStatus !== "ready" && (
-            <span className="text-xs text-muted-foreground">{clipSubline(clip)}</span>
-          )}
-        </span>
-        <Headline clip={clip} unit={unit} />
-      </Link>
+      <ClipRowLink clip={clip} unit={unit} to={`/clip/${clip.id}`} />
       <DropdownMenu onOpenChange={noteMenu}>
         <DropdownMenuTrigger aria-label="More actions" className={ICON_BTN}>
           <MoreHorizontal className="size-[18px]" />

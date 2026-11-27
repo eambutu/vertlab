@@ -7,12 +7,9 @@ import { dayHeading, dayLong, dayShort, plural, whenRecorded } from "../../lib/f
 import { store, useUnit } from "../../lib/store";
 import type { SharedView } from "../../lib/store";
 import {
-  ClipThumb,
-  Headline,
+  ClipRowLink,
   ListCard,
   Page,
-  clipSubline,
-  modeLabel,
 } from "../library/parts";
 import { ClipViewer } from "./clip-viewer";
 
@@ -208,21 +205,9 @@ function SharedSession({ kind, token, n, day }: {
   const jumps = (
     <ListCard>
       {view.clips.map((c, i) => (
-        <Link
-          key={c.id}
-          to={`/d/${token}/${i + 1}${query}`}
-          className="flex items-center gap-3 py-2.5 pl-3 pr-2 hover:bg-zinc-50"
-        >
-          <ClipThumb clip={c} />
-          <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-            <span className="text-sm font-medium">{modeLabel(c)}</span>
-            <span className="truncate text-xs text-muted-foreground">
-              {clipSubline(c)}
-            </span>
-          </span>
-          <Headline clip={c} unit={unit} />
-          <ChevronRight className="size-4 shrink-0 text-zinc-500" />
-        </Link>
+        <ClipRowLink key={c.id} clip={c} unit={unit} to={`/d/${token}/${i + 1}${query}`}>
+          <ChevronRight className="mr-2 size-4 shrink-0 text-zinc-500" />
+        </ClipRowLink>
       ))}
     </ListCard>
   );

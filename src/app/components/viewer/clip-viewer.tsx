@@ -9,7 +9,7 @@ import { KeyframeStrip } from "../keyframe-strip";
 import { ModeResults } from "../modes/mode-results";
 import { PlayerControls } from "../player-controls";
 import { useFrameThumbs } from "./use-frame-thumbs";
-import { ErrorReport } from "../error-report";
+import { VideoFrame } from "../video-frame";
 import { useVideoDiagnostics } from "../use-video-diagnostics";
 
 /**
@@ -92,38 +92,18 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
         <Headline clip={clip} unit={unit} className="text-2xl" />
       </div>
 
-      {/* Player — same frame as the analyzer's. */}
-      <div className="relative flex justify-center overflow-hidden rounded-2xl border border-border bg-black">
-        <video
-          key={clip.id}
-          ref={video}
-          src={clip.videoUrl}
-          poster={clip.poster}
-          crossOrigin="anonymous"
-          playsInline
-          preload="metadata"
-          style={{ aspectRatio: aspect }}
-          className="max-h-[70vh] w-full bg-black object-contain"
-          onClick={toggle}
-          onLoadedMetadata={(e) => {
-            diagnostics.onMetadata(e.currentTarget);
-            setDuration(e.currentTarget.duration);
-          }}
-          onError={(e) => diagnostics.onError(e.currentTarget)}
-          onLoadedData={(e) => diagnostics.onFrameReady(e.currentTarget)}
-          onCanPlay={(e) => diagnostics.onFrameReady(e.currentTarget)}
-          onStalled={(e) => diagnostics.onStalled(e.currentTarget)}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
-        />
-        {diagnostics.message && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-auto p-4 text-center">
-            <p role="alert" className="text-sm text-white">{diagnostics.message}</p>
-            <ErrorReport />
-          </div>
-        )}
-      </div>
+      <VideoFrame
+        key={clip.id}
+        videoRef={video}
+        src={clip.videoUrl}
+        aspect={aspect}
+        poster={clip.poster}
+        preload="metadata"
+        diagnostics={diagnostics}
+        onTogglePlay={toggle}
+        onPlayingChange={setPlaying}
+        onMetadata={(v) => setDuration(v.duration)}
+      />
 
       <PlayerControls
         current={current}
