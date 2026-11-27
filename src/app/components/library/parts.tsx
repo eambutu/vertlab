@@ -182,3 +182,33 @@ export function clipSubline(clip: Clip | SharedClip): string {
   if (n === 0) return "Not analyzed yet";
   return `${n} keyframe${n === 1 ? "" : "s"}`;
 }
+
+/** The same row opens an editable clip or a read-only shared jump. */
+export function ClipRowLink({ clip, unit, to, children }: {
+  clip: Clip | SharedClip;
+  unit: HeightUnit;
+  to: string;
+  children?: ReactNode;
+}) {
+  const owned = "videoStatus" in clip ? clip : undefined;
+  const showFileName = owned && (owned.videoStatus !== "ready" || (!owned.summary && !owned.keyframes.length));
+  return (
+    <Link to={to} className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 outline-none hover:bg-zinc-50 focus-visible:bg-zinc-50">
+      <ClipThumb clip={clip} />
+      <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
+        <span className="flex items-center gap-1.5 text-sm font-medium">
+          {modeLabel(clip)}
+          {owned?.starred && <StarMark />}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          {showFileName ? owned.title : clipSubline(clip)}
+        </span>
+        {owned && owned.videoStatus !== "ready" && (
+          <span className="text-xs text-muted-foreground">{clipSubline(owned)}</span>
+        )}
+      </span>
+      <Headline clip={clip} unit={unit} />
+      {children}
+    </Link>
+  );
+}

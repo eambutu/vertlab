@@ -36,7 +36,7 @@ import {
 import { ShareClipDrawer } from "./share/share-drawers";
 import { DeleteClipDialog } from "./library/delete-clip-dialog";
 import { store, useShowErrors } from "../lib/store";
-import { ErrorReport } from "./error-report";
+import { VideoFrame } from "./video-frame";
 import { useVideoDiagnostics } from "./use-video-diagnostics";
 import type { Clip } from "../lib/store";
 import {
@@ -100,8 +100,8 @@ const DIFF_WIDTH = 160;
 export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { onMetadata, onFrameReady, onError, onStalled, play, message: playbackMessage } =
-    useVideoDiagnostics(videoRef, url, clip.id, loadId, "library");
+  const diagnostics = useVideoDiagnostics(videoRef, url, clip.id, loadId, "library");
+  const { play } = diagnostics;
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -447,58 +447,38 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
       </header>
 
       {/* Player */}
-      <div className="relative flex justify-center overflow-hidden rounded-2xl border border-border bg-black">
-        <video
-          ref={videoRef}
-          src={url}
-          // Signed storage URLs are cross-origin; without CORS mode the
-          // canvas frame grabs would be blocked.
-          crossOrigin="anonymous"
-          playsInline
-          style={{ aspectRatio: aspect }}
-          className="max-h-[70vh] w-full bg-black object-contain"
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget;
-            onMetadata(v);
-            setDuration(v.duration);
-            if (v.videoWidth && v.videoHeight) {
-              setAspect(v.videoWidth / v.videoHeight);
-            }
-            setDetecting(true);
-            const detect = clip.fps
-              ? Promise.resolve(clip.fps)
-              : detectFps(v);
-            detect
-              .then((detected) => {
-                setFps(detected);
-                return restore();
-              })
-              .finally(() => setDetecting(false));
-          }}
-          onLoadedData={(event) => onFrameReady(event.currentTarget)}
-          onCanPlay={(event) => onFrameReady(event.currentTarget)}
-          onError={(event) => {
-            onError(event.currentTarget);
-            setDetecting(false);
-          }}
-          onStalled={(event) => onStalled(event.currentTarget)}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onClick={togglePlay}
-        />
-        {/* Masks the brief playback used to measure the frame rate. */}
-        {playbackMessage ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-auto p-4 text-center">
-            <p role="alert" className="text-sm text-white">{playbackMessage}</p>
-            <ErrorReport />
-          </div>
-        ) : detecting && (
+      <VideoFrame
+        videoRef={videoRef}
+        src={url}
+        aspect={aspect}
+        diagnostics={diagnostics}
+        onTogglePlay={togglePlay}
+        onPlayingChange={setPlaying}
+        onError={() => setDetecting(false)}
+        onMetadata={(v) => {
+          setDuration(v.duration);
+          if (v.videoWidth && v.videoHeight) {
+            setAspect(v.videoWidth / v.videoHeight);
+          }
+          setDetecting(true);
+          const detect = clip.fps
+            ? Promise.resolve(clip.fps)
+            : detectFps(v);
+          detect
+            .then((detected) => {
+              setFps(detected);
+              return restore();
+            })
+            .finally(() => setDetecting(false));
+        }}
+      >
+        {detecting && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black text-sm text-white/80">
             <Loader2 className="size-4 animate-spin" />
             {clip.keyframes.length ? "Loading your keyframes…" : "Analyzing video…"}
           </div>
         )}
-      </div>
+      </VideoFrame>
 
       <PlayerControls
         current={current}
