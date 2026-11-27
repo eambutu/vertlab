@@ -457,11 +457,14 @@ export async function findKeyframes(opts: FindOptions): Promise<FindResult> {
   progress("Loading the pose model", 0);
   try {
     await loadPose();
-  } catch {
-    return { ok: false, reason: "Couldn't load the pose model. Check your connection and try again." };
+  } catch (error) {
+    abortIfNeeded(signal);
+    return { ok: false, reason: error instanceof Error && error.name === "TimeoutError"
+      ? error.message : "Couldn't load the pose model. Check your connection and try again." };
   }
   abortIfNeeded(signal);
 
+  progress("Opening the video", 0.03);
   let reader: FrameReader;
   try {
     reader = await FrameReader.open(url, fps);

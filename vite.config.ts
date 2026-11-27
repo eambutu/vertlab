@@ -3,6 +3,7 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 
 function offlineApp() {
@@ -41,6 +42,11 @@ function figmaAssetResolver() {
 }
 
 export default defineConfig({
+  define: {
+    __POSE_RUNTIME_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(path.join(path.dirname(createRequire(import.meta.url).resolve('@mediapipe/tasks-vision')), 'package.json'), 'utf8')).version
+    ),
+  },
   plugins: [
     figmaAssetResolver(),
     // The React and Tailwind plugins are both required for Make, even if

@@ -2,8 +2,9 @@
 // cached by the browser afterwards).
 import type { NormalizedLandmark, PoseLandmarker } from "@mediapipe/tasks-vision";
 
-const VERSION = "0.10.14";
-const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/wasm`;
+declare const __POSE_RUNTIME_VERSION__: string;
+const WASM_URL = `/pose-runtime/${__POSE_RUNTIME_VERSION__}`;
+const LOAD_TIMEOUT_MS = 30_000;
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
@@ -12,11 +13,14 @@ let landmarker: Promise<PoseLandmarker> | null = null;
 // life, across clips too.
 let clock = 0;
 
-async function create(): Promise<PoseLandmarker> {
+async function create(signal: AbortSignal): Promise<PoseLandmarker> {
   const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
   const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+  const response = await fetch(MODEL_URL, { signal });
+  if (!response.ok) throw new Error("Pose model download failed");
+  const modelAssetBuffer = new Uint8Array(await response.arrayBuffer());
   const options = (delegate: "GPU" | "CPU") => ({
-    baseOptions: { modelAssetPath: MODEL_URL, delegate },
+    baseOptions: { modelAssetBuffer, delegate },
     runningMode: "VIDEO" as const,
     numPoses: 2,
     minPoseDetectionConfidence: 0.4,
@@ -26,15 +30,28 @@ async function create(): Promise<PoseLandmarker> {
   try {
     return await PoseLandmarker.createFromOptions(fileset, options("GPU"));
   } catch {
+    signal.throwIfAborted();
     return PoseLandmarker.createFromOptions(fileset, options("CPU"));
   }
 }
 
 export function loadPose(): Promise<PoseLandmarker> {
-  landmarker ??= create().catch((e) => {
-    landmarker = null;
-    throw e;
-  });
+  if (!landmarker) {
+    const controller = new AbortController();
+    landmarker = new Promise<PoseLandmarker>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        controller.abort();
+        reject(new DOMException("The pose model took too long to load. Try again, or capture the frames manually.", "TimeoutError"));
+      }, LOAD_TIMEOUT_MS);
+      create(controller.signal).then(pose => {
+        if (controller.signal.aborted) pose.close();
+        else resolve(pose);
+      }, reject).finally(() => clearTimeout(timer));
+    }).catch(error => {
+      landmarker = null;
+      throw error;
+    });
+  }
   return landmarker;
 }
 

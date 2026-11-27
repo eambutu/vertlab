@@ -24,17 +24,25 @@ export class FrameReader {
     v.muted = true;
     v.playsInline = true;
     v.preload = "auto";
-    v.src = url;
-    await new Promise<void>((resolve, reject) => {
-      v.addEventListener("loadeddata", () => resolve(), { once: true });
-      v.addEventListener(
-        "error",
-        () => reject(new Error("This video couldn't be read.")),
-        { once: true },
-      );
-    });
-    if (!v.videoWidth || !isFinite(v.duration)) {
-      throw new Error("This video couldn't be read.");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => finish(new Error("The video took too long to open. Reopen the clip and try again.")), 15_000);
+        function finish(error?: Error) {
+          clearTimeout(timer);
+          v.onloadeddata = null;
+          v.onerror = null;
+          if (error) reject(error);
+          else resolve();
+        }
+        v.onloadeddata = () => finish();
+        v.onerror = () => finish(new Error("This video couldn't be read."));
+        v.src = url;
+      });
+      if (!v.videoWidth || !isFinite(v.duration)) throw new Error("This video couldn't be read.");
+    } catch (error) {
+      v.removeAttribute("src");
+      v.load();
+      throw error;
     }
     return new FrameReader(v, fps);
   }

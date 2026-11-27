@@ -52,3 +52,5 @@ Desktop.ini
 # Secrets / keys
 *.pem
 .vercel
+
+/public/pose-runtime/
