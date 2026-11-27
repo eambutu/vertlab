@@ -92,6 +92,7 @@ export interface ClipStore {
   requestPoster?(id: string): void;
   cachedLibraryPage?(from: string): Promise<LibraryPage | undefined>;
 
+  recentCustomModes(): Promise<string[]>;
   listClips(): Promise<Clip[]>;
   getClip(id: string): Promise<Clip | undefined>;
   createClip(file: File): Promise<Clip>;

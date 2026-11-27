@@ -60,28 +60,11 @@ const SuggestKeyframes = lazy(
   () => import("../features/keyframe-suggest/suggest-keyframes"),
 );
 
-// The analysis selector combines the built-in two-frame compare with the modes.
-const COMPARE_MODE = "compare";
-const ANALYSIS_OPTIONS = [
-  { id: COMPARE_MODE, label: "Compare" },
-  ...MODES.map((m) => ({ id: m.id, label: m.label })),
-  { id: CUSTOM_MODE, label: "Custom" },
-];
+import { ANALYSIS_OPTIONS, COMPARE_MODE, MODE_STORAGE_KEY } from "../lib/exercise-types";
 
 /** Compare and Custom both work by picking two frames to compare. */
 const isCompareLike = (id: string) => id === COMPARE_MODE || id === CUSTOM_MODE;
 
-const MODE_STORAGE_KEY = "vertlab.analysisMode";
-
-function loadStoredMode(): string {
-  try {
-    const saved = localStorage.getItem(MODE_STORAGE_KEY);
-    if (saved && ANALYSIS_OPTIONS.some((o) => o.id === parseMode(saved).id)) return saved;
-  } catch {
-    /* localStorage unavailable */
-  }
-  return COMPARE_MODE;
-}
 import { detectFps } from "../lib/video-utils";
 import type { Keyframe } from "./types";
 
@@ -107,18 +90,7 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   const [playing, setPlaying] = useState(false);
   const [keyframes, setKeyframes] = useState<Keyframe[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  // A clip that was already worked on reopens in its own mode; a fresh one
-  // starts in the last mode you used.
-  // The mode string carries options too ("custom:Box jump", "depth-jump:3");
-  // split it so each part has its own control.
-  // A labelled Custom clip counts as worked on even before any keyframes.
-  const [initialMode] = useState(() =>
-    parseMode(
-      clip.keyframes.length || clip.summary || parseMode(clip.mode).label
-        ? clip.mode
-        : loadStoredMode(),
-    ),
-  );
+  const [initialMode] = useState(() => parseMode(clip.mode));
   const [analysisMode, setAnalysisMode] = useState<string>(initialMode.id);
   // The label lives on the clip, never in the remembered mode, so a fresh
   // clip doesn't inherit the last one's.
