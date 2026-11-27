@@ -6,6 +6,7 @@ import type { ClipSummary } from "../metrics";
 import type {
   Clip,
   ClipPatch,
+  LibraryPage,
   ClipStore,
   Share,
   SharedView,
@@ -13,6 +14,8 @@ import type {
 } from "./types";
 import { getAuth, subscribeAuth } from "../auth";
 import { changeJob, getJob, getJobVideo, listJobs, type ClipJob, type PendingVideo } from "./clip-outbox";
+import { readRecent, saveRecent } from "./library-cache";
+import { recentLibraryStart } from "./library-dates";
 import { newLocalClip } from "./local-store";
 import {
   describeUploadError,
@@ -66,6 +69,8 @@ interface ShareRow {
 const CLIP_COLUMNS =
   "id, user_id, created_at, day, title, mode, keyframes, fps, duration, width, height, summary, starred, poster, video_path";
 
+const LIST_COLUMNS = "id, created_at, updated_at, day, title, mode, keyframes, fps, duration, width, height, summary, starred, video_path";
+
 function videoPath(userId: string, clipId: string, file: File) {
   return `${userId}/${clipId}/video.${videoExtension(file) ?? "mp4"}`;
 }
@@ -75,6 +80,11 @@ export class SupabaseClipStore implements ClipStore {
   private userId: string | undefined;
   private localVideoIds = new Set<string>();
   private cloudClips = new Map<string, Clip>();
+  private pages = new Map<string, Promise<LibraryPage>>();
+  private posterCache = new Map<string, string | null>();
+  private posterVersions = new Map<string, string>();
+  private posterQueue = new Set<string>();
+  private posterTimer?: number;
   private libraryLoaded = false;
   private libraryRequest?: Promise<void>;
   private libraryRevision = 0;
@@ -95,7 +105,7 @@ export class SupabaseClipStore implements ClipStore {
   ) {
     const resume = () => {
       this.scheduleSync();
-      void this.refreshLibrary();
+      this.invalidateLibrary();
       this.emit();
     };
     const accountChanged = () => {
@@ -106,6 +116,9 @@ export class SupabaseClipStore implements ClipStore {
       this.userId = userId;
       this.localVideoIds.clear();
       this.cloudClips.clear();
+      this.posterCache.clear();
+      this.posterQueue.clear();
+      this.posterVersions.clear();
       this.libraryLoaded = false;
       this.libraryRevision++;
       this.libraryRequest = undefined;
@@ -118,7 +131,7 @@ export class SupabaseClipStore implements ClipStore {
     this.channel?.addEventListener("message", ({ data }) => {
       if (!this.userId || data?.scope !== this.scope(this.userId)) return;
       if (data.runSync) this.scheduleSync();
-      else void this.refreshLibrary();
+      else this.invalidateLibrary();
       this.emit();
     });
     window.addEventListener("online", resume);
@@ -183,6 +196,13 @@ export class SupabaseClipStore implements ClipStore {
     };
   }
 
+  private invalidateLibrary() {
+    this.pages.clear();
+    this.libraryLoaded = false;
+    this.libraryRevision++;
+    this.libraryRequest = undefined;
+  }
+
   private refreshLibrary() {
     const userId = this.userId;
     if (!userId || !navigator.onLine) return;
@@ -195,7 +215,6 @@ export class SupabaseClipStore implements ClipStore {
       if (this.userId !== userId || revision !== this.libraryRevision) return;
       this.cloudClips = new Map((data as ClipRow[]).map((row) => [row.id, this.toClip(row)]));
       this.libraryLoaded = true;
-      this.emit();
     })().catch((error) => {
       logUpload("cloud library unavailable", describeUploadError(error), "warn");
     }).finally(() => {
@@ -216,7 +235,103 @@ export class SupabaseClipStore implements ClipStore {
     return { ...clip, ...job.patch, videoStatus };
   }
 
+  private async fetchPage(userId: string, from: string, before?: string): Promise<LibraryPage> {
+    const revision = this.libraryRevision;
+    const rows: Clip[] = [];
+    // A day can exceed the API row cap; finish the range before exposing it.
+    const batch = 250;
+    for (let offset = 0; ; offset += batch) {
+      let query = this.sb.from("clips").select(LIST_COLUMNS)
+        .eq("user_id", userId).gte("day", from);
+      if (before) query = query.lt("day", before);
+      const { data, error } = await query.order("day", { ascending: false })
+        .order("created_at", { ascending: false }).order("id").range(offset, offset + batch - 1);
+      if (error) throw error;
+      for (const row of data) {
+        if (revision === this.libraryRevision && this.userId === userId) {
+          if (this.posterVersions.get(row.id) !== row.updated_at) this.posterCache.delete(row.id);
+          this.posterVersions.set(row.id, row.updated_at);
+        }
+        rows.push(this.toClip(row as unknown as ClipRow));
+      }
+      if (data.length < batch) break;
+    }
+    const { data, error } = await this.sb.from("clips").select("day")
+      .eq("user_id", userId).lt("day", from).order("day", { ascending: false }).limit(1);
+    if (error) throw error;
+    return { clips: rows, olderDay: data[0]?.day };
+  }
+
+  private async withPending(userId: string, page: LibraryPage, from: string, before?: string) {
+    const clips = new Map(page.clips.map(c => [c.id, c]));
+    let olderDay = page.olderDay;
+    const jobs = await listJobs(this.scope(userId));
+    if (this.userId !== userId) return { clips: [] };
+    this.localVideoIds = new Set(jobs.filter(j => j.video && !j.video.missing).map(j => j.id));
+    for (const job of jobs) {
+      const clip = this.localClip(job);
+      if (!clip) clips.delete(job.id);
+      else if (clip.day >= from && (!before || clip.day < before)) clips.set(job.id, clip);
+      else if (clip.day < from && (!olderDay || clip.day > olderDay)) olderDay = clip.day;
+    }
+    return { clips: [...clips.values()].map(c => c.poster || !this.posterCache.get(c.id)
+      ? c : { ...c, poster: this.posterCache.get(c.id)! }), olderDay };
+  }
+
+  async cachedLibraryPage(from: string) {
+    const userId = this.localUser();
+    const saved = await readRecent(this.scope(userId), from).catch(() => undefined);
+    const page = await this.withPending(userId, saved ?? { clips: [] }, from);
+    return saved || page.clips.length || page.olderDay ? page : undefined;
+  }
+
+  async libraryPage(from: string, before?: string) {
+    const userId = this.localUser();
+    const key = from + "/" + (before ?? "");
+    let request = this.pages.get(key);
+    if (!request) {
+      const revision = this.libraryRevision;
+      request = this.fetchPage(userId, from, before).then(page => {
+        if (!before && this.userId === userId && revision === this.libraryRevision) {
+          void saveRecent(this.scope(userId), from, page).catch(() => {});
+        }
+        return page;
+      });
+      this.pages.set(key, request);
+    }
+    try {
+      return await this.withPending(userId, await request, from, before);
+    } catch (error) {
+      if (this.pages.get(key) === request) this.pages.delete(key);
+      throw error;
+    }
+  }
+
+  requestPoster(id: string) {
+    if (!this.userId || this.posterCache.has(id) || !navigator.onLine) return;
+    this.posterQueue.add(id);
+    if (this.posterTimer !== undefined) return;
+    this.posterTimer = window.setTimeout(async () => {
+      this.posterTimer = undefined;
+      const userId = this.userId;
+      const revision = this.libraryRevision;
+      const ids = [...this.posterQueue];
+      this.posterQueue.clear();
+      if (!userId) return;
+      for (let i = 0; i < ids.length; i += 30) {
+        const { data, error } = await this.sb.from("clips").select("id,poster")
+          .eq("user_id", userId).in("id", ids.slice(i, i + 30));
+        if (error || this.userId !== userId || revision !== this.libraryRevision) return;
+        for (const id of ids.slice(i, i + 30)) this.posterCache.set(id, null);
+        for (const row of data) this.posterCache.set(row.id, row.poster);
+      }
+      this.emit();
+    }, 20);
+  }
+
   async listClips() {
+    // Settings and the accuracy tool explicitly request the full library.
+    if (!this.libraryLoaded) await this.refreshLibrary();
     const userId = this.localUser();
     const jobs = await listJobs(this.scope(userId)).catch((error) => {
       logUpload("local library unavailable", describeUploadError(error), "warn");
@@ -241,8 +356,16 @@ export class SupabaseClipStore implements ClipStore {
       if (job.video && !job.video.missing) this.localVideoIds.add(id);
       return this.localClip(job);
     }
-    if (!this.libraryLoaded) await this.refreshLibrary();
-    return this.userId === userId ? this.cloudClips.get(id) : undefined;
+    const cached = this.cloudClips.get(id);
+    if (cached && this.libraryLoaded) return cached;
+    if (!navigator.onLine) {
+      const recent = await this.cachedLibraryPage(recentLibraryStart());
+      return cached ?? recent?.clips.find(clip => clip.id === id);
+    }
+    const { data, error } = await this.sb.from("clips").select(CLIP_COLUMNS)
+      .eq("user_id", userId).eq("id", id).maybeSingle();
+    if (error) throw error;
+    return this.userId === userId && data ? this.toClip(data as ClipRow) : undefined;
   }
 
   private videoFor(userId: string, clipId: string, file: File, contentType: string, path?: string): PendingVideo {
@@ -392,7 +515,7 @@ export class SupabaseClipStore implements ClipStore {
       await this.finishJob(job);
       if (this.userId === userId) {
         this.cloudClips.delete(id);
-        this.libraryRevision++;
+        this.invalidateLibrary();
       }
       this.changed(scope);
       return;
@@ -436,7 +559,7 @@ export class SupabaseClipStore implements ClipStore {
     if (this.userId === userId) {
       if (result.data) this.cloudClips.set(id, this.toClip(result.data as ClipRow));
       else this.cloudClips.delete(id);
-      this.libraryRevision++;
+      this.invalidateLibrary();
       this.signedUrls.delete(id);
     }
     logUpload("clip synced", { clipId: id });

@@ -20,9 +20,10 @@ import {
 import { buttonVariants } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "../ui/utils";
+import { useLibraryFeed } from "./use-library-feed";
 import { Home } from "../home";
 import { dayHeading, plural } from "../../lib/format";
-import { isCloudBacked, localDay, store, useClips, useOnline, useUnit } from "../../lib/store";
+import { isCloudBacked, localDay, store, useOnline, useUnit } from "../../lib/store";
 import type { Clip } from "../../lib/store";
 import { describeUploadError, logUpload } from "../../lib/store/upload";
 import type { UploaderProps } from "../uploader";
@@ -171,6 +172,21 @@ function ClipRow({
   onDelete: () => void;
 }) {
   const unit = useUnit();
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const load = store.requestPoster;
+    if (!load || clip.poster || !row.current || clip.videoStatus !== "ready") return;
+    const request = () => load.call(store, clip.id);
+    if (!("IntersectionObserver" in window)) { request(); return; }
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        request();
+        observer.disconnect();
+      }
+    }, { rootMargin: "200px" });
+    observer.observe(row.current);
+    return () => observer.disconnect();
+  }, [clip]);
   const picker = useRef<HTMLInputElement>(null);
   const failed = clip.videoStatus === "failed";
   const hasLocalVideo = failed && store.hasLocalVideo(clip.id);
@@ -188,7 +204,7 @@ function ClipRow({
   }
 
   return (
-    <div className="flex items-center gap-1.5 pr-1.5 has-[[data-state=open]]:bg-zinc-50">
+    <div ref={row} className="flex items-center gap-1.5 pr-1.5 has-[[data-state=open]]:bg-zinc-50">
       {failed && (
         <input
           ref={picker}
@@ -271,13 +287,33 @@ function ClipRow({
 }
 
 export function Library() {
-  const clips = useClips();
+  const { feed, failed, loading, loadOlder, retry } = useLibraryFeed();
+  const clips = feed?.clips;
+  const more = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const button = more.current;
+    if (!button || !feed?.olderDay || loading || failed || !("IntersectionObserver" in window)) return;
+    // Keep short libraries bounded until the user scrolls or chooses the button.
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting) && window.scrollY > 0) loadOlder();
+    });
+    const onScroll = () => {
+      if (window.scrollY > 0 && button.getBoundingClientRect().top <= window.innerHeight + 100) loadOlder();
+    };
+    observer.observe(button);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => { observer.disconnect(); window.removeEventListener("scroll", onScroll); };
+  }, [feed?.olderDay, loading, failed, loadOlder]);
   const online = useOnline();
   const uploader = useAddClips();
   const [sharing, setSharing] = useState<Clip | null>(null);
   const [sharingDay, setSharingDay] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Clip | null>(null);
 
+  const retryButton = <button type="button" className="my-4 rounded-xl border bg-white px-4 py-3 text-sm" onClick={retry}>
+    Couldn’t refresh your library · Retry
+  </button>;
+  if (clips === undefined && failed) return <Page className="pt-6"><AddClipButton {...uploader} />{retryButton}</Page>;
   if (clips === undefined) {
     return (
       <Page>
@@ -291,7 +327,7 @@ export function Library() {
   }
 
   // First run: keep the original landing page as the empty state.
-  if (clips.length === 0) return <Home {...uploader} />;
+  if (clips.length === 0 && !feed?.olderDay && !failed) return <Home {...uploader} />;
 
   const today = localDay();
   const days = groupByDay(clips);
@@ -328,7 +364,7 @@ export function Library() {
                 <span className="text-xs text-muted-foreground">
                   {plural(dayClips.length, "jump")}
                 </span>
-                {dayClips.length > 0 && (
+                {dayClips.length > 0 && !loading && !failed && (
                   <DropdownMenu onOpenChange={noteMenu}>
                     <DropdownMenuTrigger
                       aria-label="Day actions"
@@ -365,6 +401,13 @@ export function Library() {
           </section>
         ))}
       </div>
+
+      {failed ? retryButton : feed?.olderDay && (
+        <button ref={more} type="button" disabled={loading} onClick={loadOlder}
+          className="mt-4 w-full rounded-xl border bg-white px-4 py-3 text-sm font-medium">
+          {loading ? "Loading older sessions…" : "Load older sessions"}
+        </button>
+      )}
 
       <ShareClipDrawer
         clip={clips.find((clip) => clip.id === sharing?.id) ?? null}
