@@ -4,6 +4,8 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "prebuild": "node prepare-pose-runtime.mjs",
+    "predev": "node prepare-pose-runtime.mjs",
     "build": "vite build",
     "dev": "vite"
   },
