@@ -523,7 +523,7 @@ export class SupabaseClipStore implements ClipStore {
     if (job.create && job.clip) {
       const { createdAt, day, title } = job.clip;
       const result = await this.sb.from("clips").upsert({
-        id, user_id: userId, created_at: new Date(createdAt).toISOString(), day, title,
+        id, user_id: userId, created_at: new Date(createdAt).toISOString(), day, title, mode: job.clip.mode,
       }, { onConflict: "id", ignoreDuplicates: true }).abortSignal(signal);
       checkCloudError(result);
       await changeJob(scope, id, (current) => current?.create && !current.deletePaths
@@ -703,6 +703,15 @@ export class SupabaseClipStore implements ClipStore {
           .map((c) => c.clip_id),
       createdAt: Date.parse(r.created_at),
     };
+  }
+
+  async recentCustomModes(): Promise<string[]> {
+    const userId = this.localUser();
+    const { data, error } = await this.sb.from("clips").select("mode")
+      .eq("user_id", userId).like("mode", "custom:%")
+      .order("updated_at", { ascending: false }).limit(100);
+    if (error) throw error;
+    return this.userId === userId ? data.map(row => row.mode) : [];
   }
 
   async listShares(): Promise<Share[]> {

@@ -8,6 +8,7 @@ import {
   Share,
   Star,
   Trash2,
+  Tags,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -20,6 +21,7 @@ import {
 import { buttonVariants } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "../ui/utils";
+import { ExercisePicker } from "./exercise-picker";
 import { useLibraryFeed } from "./use-library-feed";
 import { Home } from "../home";
 import { dayHeading, plural } from "../../lib/format";
@@ -165,10 +167,12 @@ function AddClipButton({ onFiles, adding }: UploaderProps) {
 function ClipRow({
   clip,
   onShare,
+  onExercise,
   onDelete,
 }: {
   clip: Clip;
   onShare: () => void;
+  onExercise: () => void;
   onDelete: () => void;
 }) {
   const unit = useUnit();
@@ -187,6 +191,13 @@ function ClipRow({
     observer.observe(row.current);
     return () => observer.disconnect();
   }, [clip]);
+  const hold = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const openedByHold = useRef(false);
+  function cancelHold() {
+    if (hold.current) window.clearTimeout(hold.current.timer);
+    hold.current = null;
+  }
+  useEffect(() => cancelHold, []);
   const picker = useRef<HTMLInputElement>(null);
   const failed = clip.videoStatus === "failed";
   const hasLocalVideo = failed && store.hasLocalVideo(clip.id);
@@ -204,7 +215,25 @@ function ClipRow({
   }
 
   return (
-    <div ref={row} className="flex items-center gap-1.5 pr-1.5 has-[[data-state=open]]:bg-zinc-50">
+    <div ref={row}
+      onPointerDown={e => {
+        cancelHold();
+        openedByHold.current = false;
+        if (!e.isPrimary || e.button !== 0 || !(e.target as Element).closest("a")) return;
+        hold.current = { x: e.clientX, y: e.clientY, timer: window.setTimeout(() => {
+          hold.current = null;
+          openedByHold.current = true;
+          onExercise();
+        }, 500) };
+      }}
+      onPointerMove={e => { if (hold.current && Math.hypot(e.clientX - hold.current.x, e.clientY - hold.current.y) > 9) cancelHold(); }}
+      onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold}
+      onContextMenu={e => {
+        if (!(e.target as Element).closest("a")) return;
+        e.preventDefault(); cancelHold(); openedByHold.current = true; onExercise();
+      }}
+      onClickCapture={e => { if (openedByHold.current && e.detail !== 0) { e.preventDefault(); e.stopPropagation(); openedByHold.current = false; } }}
+      className="select-none [-webkit-touch-callout:none] flex items-center gap-1.5 pr-1.5 has-[[data-state=open]]:bg-zinc-50">
       {failed && (
         <input
           ref={picker}
@@ -249,6 +278,9 @@ function ClipRow({
               <DropdownMenuSeparator className="mx-1.5" />
             </>
           )}
+          <DropdownMenuItem className="h-11 rounded-lg px-2.5 text-sm font-medium" onSelect={onExercise}>
+            <Tags className="size-[17px]" /> Change exercise…
+          </DropdownMenuItem>
           <DropdownMenuItem
             className="h-11 rounded-lg px-2.5 text-sm font-medium"
             onSelect={() => {
@@ -306,6 +338,7 @@ export function Library() {
   }, [feed?.olderDay, loading, failed, loadOlder]);
   const online = useOnline();
   const uploader = useAddClips();
+  const [exerciseClip, setExerciseClip] = useState<Clip | null>(null);
   const [sharing, setSharing] = useState<Clip | null>(null);
   const [sharingDay, setSharingDay] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Clip | null>(null);
@@ -393,6 +426,7 @@ export function Library() {
                     key={c.id}
                     clip={c}
                     onShare={() => setSharing(c)}
+                    onExercise={() => setExerciseClip(c)}
                     onDelete={() => setDeleting(c)}
                   />
                 ))}
@@ -409,6 +443,7 @@ export function Library() {
         </button>
       )}
 
+      {exerciseClip && <ExercisePicker clip={exerciseClip} clips={clips} close={() => setExerciseClip(null)} />}
       <ShareClipDrawer
         clip={clips.find((clip) => clip.id === sharing?.id) ?? null}
         open={!!sharing}

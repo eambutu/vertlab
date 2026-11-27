@@ -9,6 +9,7 @@ import type {
   SharedClip,
   SharedView,
 } from "./types";
+import { defaultExercise } from "../exercise-types";
 import { validateVideo } from "./upload";
 
 const DB_NAME = "vertlab";
@@ -71,7 +72,7 @@ export function newLocalClip(file: File, videoStatus: Clip["videoStatus"]): Clip
     createdAt: now.getTime(),
     day: localDay(now),
     title: file.name,
-    mode: "compare",
+    mode: defaultExercise(),
     keyframes: [],
     summary: null,
     starred: false,
@@ -111,6 +112,10 @@ export class LocalClipStore implements ClipStore {
       reqToPromise(index.openKeyCursor(IDBKeyRange.upperBound(from, true), "prev")),
     ]);
     return { clips, olderDay: older?.key as string | undefined };
+  }
+
+  async recentCustomModes() {
+    return (await this.listClips()).map(clip => clip.mode).filter(mode => mode.startsWith("custom:"));
   }
 
   async listClips(): Promise<Clip[]> {
