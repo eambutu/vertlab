@@ -82,7 +82,16 @@ export interface SharedView {
   partOf?: { token: string; day: string; count: number };
 }
 
+export interface LibraryPage {
+  clips: Clip[];
+  olderDay?: string;
+}
+
 export interface ClipStore {
+  libraryPage(from: string, before?: string): Promise<LibraryPage>;
+  requestPoster?(id: string): void;
+  cachedLibraryPage?(from: string): Promise<LibraryPage | undefined>;
+
   listClips(): Promise<Clip[]>;
   getClip(id: string): Promise<Clip | undefined>;
   createClip(file: File): Promise<Clip>;

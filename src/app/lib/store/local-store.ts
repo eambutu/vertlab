@@ -12,18 +12,25 @@ import type {
 import { validateVideo } from "./upload";
 
 const DB_NAME = "vertlab";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
-      db.createObjectStore("clips", { keyPath: "id" });
-      db.createObjectStore("videos"); // key: clip id, value: Blob
-      db.createObjectStore("shares", { keyPath: "id" });
+      if (event.oldVersion === 0) {
+        db.createObjectStore("clips", { keyPath: "id" });
+        db.createObjectStore("videos"); // key: clip id, value: Blob
+        db.createObjectStore("shares", { keyPath: "id" });
+      }
+      req.transaction!.objectStore("clips").createIndex("day", "day");
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onblocked = () => reject(new Error("Close other VertLab tabs and retry."));
+    req.onsuccess = () => {
+      req.result.onversionchange = () => req.result.close();
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -77,7 +84,10 @@ export class LocalClipStore implements ClipStore {
   private listeners = new Set<() => void>();
 
   private db() {
-    this.dbPromise ??= openDb();
+    this.dbPromise ??= openDb().catch(error => {
+      this.dbPromise = null;
+      throw error;
+    });
     return this.dbPromise;
   }
 
@@ -90,6 +100,17 @@ export class LocalClipStore implements ClipStore {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  async libraryPage(from: string, before?: string) {
+    const db = await this.db();
+    const index = db.transaction("clips").objectStore("clips").index("day");
+    const range = before ? IDBKeyRange.bound(from, before, false, true) : IDBKeyRange.lowerBound(from);
+    const [clips, older] = await Promise.all([
+      reqToPromise<Clip[]>(index.getAll(range)),
+      reqToPromise(index.openKeyCursor(IDBKeyRange.upperBound(from, true), "prev")),
+    ]);
+    return { clips, olderDay: older?.key as string | undefined };
   }
 
   async listClips(): Promise<Clip[]> {
