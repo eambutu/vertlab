@@ -4,7 +4,7 @@ const STORAGE_KEY = "vertlab.diagnostics.v1";
 const MAX_EVENTS = 300;
 
 type Level = "info" | "warn" | "error";
-type Category = "upload" | "playback";
+type Category = "upload" | "playback" | "app";
 type Detail = string | number | boolean;
 
 interface DiagnosticEvent {
@@ -20,9 +20,12 @@ interface DiagnosticEvent {
 const allowedNumbers = new Set([
   "bytes", "total", "percent", "pending", "files", "fileNumber", "added", "failed",
   "elapsedMs", "queueMs", "attempt", "status", "code", "readyState", "networkState",
-  "duration", "width", "height",
+  "duration", "width", "height", "frames", "line", "column",
 ]);
 const allowedText: Record<string, RegExp> = {
+  mode: /^(compare|custom|depth-jump|approach-jump|ten-five-rsi)$/,
+  page: /^(library|clip|settings|shared|labs|other)$/,
+  bundle: /^[a-zA-Z0-9_-]{1,100}\.js$/,
   clipId: /^[a-f0-9-]{36}$/i,
   batchId: /^[a-f0-9-]{36}$/i,
   loadId: /^[a-f0-9-]{36}$/i,

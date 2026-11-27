@@ -4,6 +4,4 @@ export interface Keyframe {
   time: number;
   /** Data URL thumbnail of the captured frame. */
   thumbUrl: string;
-  /** Downscaled pixel data used for fast frame differencing. */
-  imageData: ImageData;
 }
