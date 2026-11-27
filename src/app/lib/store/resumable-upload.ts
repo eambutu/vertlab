@@ -11,9 +11,23 @@ const httpStack: HttpStack = {
     const request = xhrStack.createRequest(method, url);
     const xhr: XMLHttpRequest = request.getUnderlyingObject();
     const send = request.send.bind(request);
-    xhr.timeout = 120_000;
+
     request.send = (body) => new Promise((resolve, reject) => {
-      xhr.ontimeout = () => reject(new Error("Upload request timed out"));
+      // A slow connection can still be making progress on a 6 MiB chunk.
+      const stalled = () => {
+        xhr.abort();
+        reject(new Error("Upload made no progress"));
+      };
+      let timer = window.setTimeout(stalled, 45_000);
+      const progress = () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(stalled, 45_000);
+      };
+      xhr.upload.addEventListener("progress", progress);
+      xhr.addEventListener("loadend", () => {
+        window.clearTimeout(timer);
+        xhr.upload.removeEventListener("progress", progress);
+      }, { once: true });
       void send(body).then(resolve, reject);
     });
     return request;
@@ -30,7 +44,7 @@ interface ResumableVideo {
   contentType: string;
   getAccessToken: () => Promise<string>;
   uploadUrl?: string;
-  saveUploadUrl: (url: string) => Promise<void>;
+  saveCheckpoint: (url: string, confirmedBytes: number) => Promise<void>;
   signal: AbortSignal;
 }
 
@@ -44,7 +58,7 @@ export function uploadResumableVideo({
   contentType,
   getAccessToken,
   uploadUrl,
-  saveUploadUrl,
+  saveCheckpoint,
   signal,
 }: ResumableVideo) {
   const endpoint = new URL(projectUrl);
@@ -68,7 +82,8 @@ export function uploadResumableVideo({
       httpStack,
       uploadUrl: uploadUrl ? resolveUploadUrl(uploadUrl) : undefined,
       chunkSize: RESUMABLE_CHUNK_BYTES,
-      retryDelays: [0, 1000, 3000, 5000, 10_000],
+      // The outbox yields to other clips before resuming this URL with HEAD.
+      retryDelays: null,
       // Store the URL with the exact video before sending the first chunk.
       storeFingerprintForResuming: false,
       headers: { apikey: anonKey, "x-upsert": "true" },
@@ -86,25 +101,17 @@ export function uploadResumableVideo({
       },
       onAfterResponse: async (request, response) => {
         const status = response.getStatus();
-        if (request.getMethod() === "HEAD" && (status >= 500 || status === 429)) {
-          // Give the current URL another chance when the server is temporarily unavailable.
-          throw new Error(`Could not read the current upload offset (${status})`);
+        const method = request.getMethod();
+        if (method === "HEAD" && status >= 400 && status !== 404 && status !== 410) {
+          // Only an expired/missing session should cause tus to create a fresh one.
+          throw Object.assign(new Error("Could not resume upload"), { status });
         }
-        if (request.getMethod() !== "POST" || status !== 201) return;
-        const location = response.getHeader("Location");
-        if (location) await saveUploadUrl(resolveUploadUrl(location));
-      },
-      onShouldRetry: (error, attempt, options) => {
-        const retry = defaultOptions.onShouldRetry?.(error, attempt, options);
-        if (retry) {
-          logUpload("transfer retry", {
-            clipId,
-            attempt: attempt + 1,
-            method: error.originalRequest.getMethod(),
-            status: error.originalResponse?.getStatus(),
-          }, "warn");
+        if (status < 200 || status >= 300) return;
+        const url = method === "POST" ? response.getHeader("Location") : request.getURL();
+        const offset = Number(response.getHeader("Upload-Offset") ?? (method === "POST" ? 0 : NaN));
+        if (url && Number.isSafeInteger(offset) && offset >= 0 && offset <= file.size) {
+          await saveCheckpoint(resolveUploadUrl(url), offset);
         }
-        return !!retry;
       },
       onChunkComplete: (_chunkSize, bytes, total) => {
         const percent = Math.floor((bytes / total) * 100);

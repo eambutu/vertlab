@@ -57,10 +57,12 @@ export function describeUploadError(error: unknown) {
     code?: string;
     status?: number;
     statusCode?: string;
+    causingError?: { status?: number };
+    originalRequest?: { getMethod(): string };
     message?: string;
     originalResponse?: { getStatus(): number; getBody(): string } | null;
   } | null;
-  const status = Number(err?.originalResponse?.getStatus() ?? err?.status ?? err?.statusCode) || undefined;
+  const status = Number(err?.originalResponse?.getStatus() ?? err?.status ?? err?.causingError?.status ?? err?.statusCode) || undefined;
   const body = err?.originalResponse?.getBody() ?? err?.message ?? "";
   let reason: string | undefined;
   let failureKind: string | undefined;
@@ -83,5 +85,5 @@ export function describeUploadError(error: unknown) {
     reason = "Cloud storage didn't accept this format. Try exporting it as an H.264 MP4.";
     failureKind = "format";
   }
-  return { name: err?.name, code: err?.code, status, reason, failureKind };
+  return { name: err?.name, code: err?.code, method: err?.originalRequest?.getMethod(), status, reason, failureKind };
 }

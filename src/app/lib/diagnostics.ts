@@ -34,7 +34,7 @@ const allowedText: Record<string, RegExp> = {
   view: /^(library|shared)$/,
   stage: /^(clip lookup|video source|media|transfer|link clip)$/,
   transfer: /^(standard|resumable)$/,
-  videoStatus: /^(ready|queued|uploading|failed)$/,
+  videoStatus: /^(ready|queued|uploading|retrying|failed)$/,
   method: /^(POST|HEAD|PATCH|DELETE|GET)$/,
   name: /^[A-Za-z]{0,35}Error$/,
   code: /^(PGRST\d+|[A-Z0-9]{5})$/,

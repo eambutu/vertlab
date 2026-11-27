@@ -7,6 +7,8 @@ export interface PendingVideo {
   contentType: string;
   path: string;
   uploadUrl?: string;
+  confirmedBytes?: number;
+  uploading?: boolean;
   transferred?: boolean;
   missing?: boolean;
 }
@@ -22,6 +24,8 @@ export interface ClipJob {
   video?: PendingVideo;
   deletePaths?: string[];
   failed?: boolean;
+  retryAt?: number;
+  consecutiveFailures?: number;
 }
 
 const JOBS = "jobs";

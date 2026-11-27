@@ -116,7 +116,7 @@ function SavedClip({ id }: { id: string }) {
 
   const failed = clipStatus === "failed" || video?.status === "failed";
   if (failed || (clipResult && (!clip || video?.status === "missing"))) {
-    const uploadIncomplete = clip && (clip.videoStatus === "failed" || clip.videoStatus === "uploading" || clip.videoStatus === "queued");
+    const uploadIncomplete = clip && clip.videoStatus !== "ready";
     const title = isCloudBacked && !online ? "This video isn't available offline" : failed ? "Couldn't load this video" : !clip
       ? "This clip isn't in your library"
       : uploadIncomplete ? "This clip's video isn't ready" : "This clip's video is unavailable";
