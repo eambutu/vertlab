@@ -52,7 +52,7 @@ export function ClipViewer({ clip }: { clip: SharedClip }) {
 
   const times = clip.keyframes;
   const thumbs = useFrameThumbs(clip.videoUrl, times);
-  const frames = times.map((time, i) => ({ id: String(i), time, thumbUrl: thumbs[i] }));
+  const frames = times.map((time, i) => ({ id: String(i), time, thumbUrl: thumbs?.get(time) }));
   const labels: Record<string, string> = {};
   times.forEach((_, i) => {
     labels[String(i)] = keyframeLabel(clip.mode, i) ?? `Frame ${i + 1}`;

@@ -1,5 +1,5 @@
 import type { LibraryPage } from "./types";
-import { reqToPromise, txDone } from "./local-store";
+import { reqToPromise, txDone } from "../indexed-db";
 
 let connection: Promise<IDBDatabase> | undefined;
 function openCache() {

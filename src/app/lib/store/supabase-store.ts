@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { getAuth, subscribeAuth } from "../auth";
 import { changeJob, getJob, getJobVideo, listJobs, type ClipJob, type PendingVideo } from "./clip-outbox";
+import { clearPreviews } from "../frame-preview-cache";
 import { readRecent, saveRecent } from "./library-cache";
 import { recentLibraryStart } from "./library-dates";
 import { newLocalClip } from "./local-store";
@@ -448,6 +449,7 @@ export class SupabaseClipStore implements ClipStore {
       };
     }, file);
     if (!job?.video || job.video.missing) return false;
+    if (file) await clearPreviews(clipId).catch(() => {});
     this.localVideoIds.add(clipId);
     this.changed(scope, true);
     return true;
@@ -704,6 +706,7 @@ export class SupabaseClipStore implements ClipStore {
       deletePaths: current?.deletePaths ?? (current?.video ? [current.video.path] : []),
     }));
     this.cancelUpload(scope, id);
+    void clearPreviews(id).catch(() => {});
     this.localVideoIds.delete(id);
     this.signedUrls.delete(id);
     this.changed(scope, true, id);

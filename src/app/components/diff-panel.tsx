@@ -51,11 +51,11 @@ export function DiffPanel({ a, b }: DiffPanelProps) {
 function FrameCard({ label, kf }: { label: string; kf: Keyframe }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <img
+      {kf.thumbUrl ? <img
         src={kf.thumbUrl}
         alt={label}
         className="h-40 w-full bg-black object-contain"
-      />
+      /> : <div className="h-40 bg-black" />}
       <div className="px-3 py-2">
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="font-mono text-sm tabular-nums">

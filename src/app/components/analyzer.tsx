@@ -38,7 +38,9 @@ import { DeleteClipDialog } from "./library/delete-clip-dialog";
 import { store, useShowErrors } from "../lib/store";
 import { VideoFrame } from "./video-frame";
 import { useVideoDiagnostics } from "./use-video-diagnostics";
-import type { Clip } from "../lib/store";
+import { useFrameThumbs } from "./viewer/use-frame-thumbs";
+import { savePreview } from "../lib/frame-preview-cache";
+import type { Clip, ClipPatch } from "../lib/store";
 import {
   CUSTOM_LABEL_MAX,
   CUSTOM_MODE,
@@ -83,7 +85,8 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [keyframes, setKeyframes] = useState<Keyframe[]>([]);
+  const [keyframes, setKeyframes] = useState<Keyframe[]>(() =>
+    clip.keyframes.map((time, i) => ({ id: String(i), time })));
   const [selected, setSelected] = useState<string[]>([]);
   const [initialMode] = useState(() => parseMode(clip.mode));
   const [analysisMode, setAnalysisMode] = useState<string>(initialMode.id);
@@ -94,13 +97,17 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   const fullMode = composeMode(analysisMode, { label: customLabel, reps: depthReps });
   const [fps, setFps] = useState(clip.fps ?? 30);
   const showErrors = useShowErrors();
-  const [detecting, setDetecting] = useState(true);
+  const [detecting, setDetecting] = useState(false);
+  const probing = useRef(false);
+  const [frameReady, setFrameReady] = useState(false);
   const [aspect, setAspect] = useState(
     clip.width && clip.height ? clip.width / clip.height : 16 / 9,
   );
-  /** True once saved keyframes are back on screen; autosave waits for it. */
-  const [restored, setRestored] = useState(false);
-  const posterRef = useRef<string | undefined>(clip.poster);
+  const thumbs = useFrameThumbs(url, keyframes.filter(k => !k.thumbUrl).map(k => k.time), clip.id, frameReady && !detecting);
+  const displayFrames = keyframes.map(k => k.thumbUrl ? k : { ...k, thumbUrl: thumbs?.get(k.time) });
+  const save = useCallback((patch: ClipPatch) => {
+    void store.updateClip(clip.id, patch).catch(() => toast.error("Couldn't save your changes"));
+  }, [clip.id]);
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const suggestOn = useSuggestKeyframes();
@@ -153,22 +160,6 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
     };
   }, []);
 
-  /** Seek and wait for the frame to be ready to draw. */
-  const seekAndWait = useCallback(
-    (t: number) =>
-      new Promise<void>((resolve) => {
-        const v = videoRef.current;
-        if (!v) return resolve();
-        const done = () => {
-          v.removeEventListener("seeked", done);
-          resolve();
-        };
-        v.addEventListener("seeked", done);
-        v.currentTime = t;
-      }),
-    [],
-  );
-
   /** Small poster frame for the library list. */
   const grabPoster = useCallback((): string | undefined => {
     const v = videoRef.current;
@@ -180,67 +171,28 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
     return c.toDataURL("image/jpeg", 0.75);
   }, []);
 
-  /** Keyframes (thumbnail + diff data) for the given times. */
-  const framesAt = useCallback(
-    async (times: number[]) => {
-      videoRef.current?.pause();
-      const frames: Keyframe[] = [];
-      for (const t of times) {
-        await seekAndWait(t);
-        const kf = grabFrame();
-        if (kf) frames.push({ ...kf, time: t });
-      }
-      return frames;
-    },
-    [seekAndWait, grabFrame],
-  );
-
-  /** Replaces the keyframes with these times (from "Find keyframes"). */
-  const applyKeyframeTimes = useCallback(
-    async (times: number[]) => {
-      const frames = await framesAt(times);
-      setSelected([]);
-      setKeyframes(frames.sort((a, b) => a.time - b.time));
-      if (frames.length) await seekAndWait(frames[0].time);
-    },
-    [framesAt, seekAndWait],
-  );
-
-  /** After the video is ready: redraw saved keyframes and make a poster. */
-  const restore = useCallback(async () => {
+  const applyKeyframeTimes = useCallback((times: number[]) => {
+    const sorted = [...times].sort((a, b) => a - b);
+    setSelected([]);
+    setKeyframes(sorted.map((time, i) => ({ id: String(i), time })));
     const v = videoRef.current;
-    if (!v) return;
-    const frames = await framesAt(clip.keyframes);
-    if (!posterRef.current) {
-      await seekAndWait(0);
-      posterRef.current = grabPoster();
+    if (v && sorted.length) {
+      v.pause();
+      v.currentTime = sorted[0];
     }
-    await seekAndWait(0);
-    setKeyframes(frames);
-    setRestored(true);
-  }, [clip.keyframes, framesAt, seekAndWait, grabPoster]);
+  }, []);
 
-  // Autosave keyframes, mode and result as you work. Every clip is stored.
+  // Opening a clip or filling in a preview is read-only. Save only edits.
+  const previousEdit = useRef({ fullMode, keyframes });
   useEffect(() => {
-    if (!restored) return;
-    const times = keyframes.map((k) => k.time);
+    if (previousEdit.current.fullMode === fullMode && previousEdit.current.keyframes === keyframes) return;
     const timer = setTimeout(() => {
-      const v = videoRef.current;
-      store
-        .updateClip(clip.id, {
-          mode: fullMode,
-          keyframes: times,
-          summary: summarize(fullMode, times),
-          fps,
-          duration: v?.duration || undefined,
-          width: v?.videoWidth || undefined,
-          height: v?.videoHeight || undefined,
-          poster: posterRef.current,
-        })
-        .catch(() => toast.error("Couldn't save your changes"));
+      const times = keyframes.map(k => k.time);
+      save({ mode: fullMode, keyframes: times, summary: summarize(fullMode, times) });
+      previousEdit.current = { fullMode, keyframes };
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [restored, keyframes, fullMode, fps, clip.id]);
+  }, [keyframes, fullMode, save]);
 
   const captureCurrent = useCallback(() => {
     const v = videoRef.current;
@@ -253,11 +205,12 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
       toast("This frame is already a keyframe", { id: "dup-keyframe" });
       return;
     }
+    if (kf.thumbUrl) void savePreview(clip.id, kf.time, kf.thumbUrl).catch(() => {});
     // Keyframes stay in time order wherever you capture from.
     setKeyframes((prev) =>
       [...prev, kf].sort((a, b) => a.time - b.time),
     );
-  }, [grabFrame, fps, keyframes]);
+  }, [grabFrame, fps, keyframes, clip.id]);
 
   const seekTo = useCallback((t: number) => {
     const v = videoRef.current;
@@ -323,7 +276,7 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
   }, []);
 
   const selectedFrames = selected
-    .map((id) => keyframes.find((k) => k.id === id))
+    .map((id) => displayFrames.find((k) => k.id === id))
     .filter(Boolean) as Keyframe[];
 
   // Label keyframes according to the active mode (e.g. Approach jump, 10-5 RSI).
@@ -406,6 +359,7 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
         videoRef={videoRef}
         src={url}
         aspect={aspect}
+        poster={clip.poster}
         diagnostics={diagnostics}
         onTogglePlay={togglePlay}
         onPlayingChange={setPlaying}
@@ -415,22 +369,35 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
           if (v.videoWidth && v.videoHeight) {
             setAspect(v.videoWidth / v.videoHeight);
           }
-          setDetecting(true);
-          const detect = clip.fps
-            ? Promise.resolve(clip.fps)
-            : detectFps(v);
-          detect
-            .then((detected) => {
-              setFps(detected);
-              return restore();
-            })
-            .finally(() => setDetecting(false));
+          const patch: ClipPatch = {};
+          // Postgres stores duration as a real, so allow for rounding.
+          if (Number.isFinite(v.duration) && Math.abs((clip.duration ?? -1) - v.duration) > 0.001) patch.duration = v.duration;
+          if (v.videoWidth && clip.width !== v.videoWidth) patch.width = v.videoWidth;
+          if (v.videoHeight && clip.height !== v.videoHeight) patch.height = v.videoHeight;
+          if (Object.keys(patch).length) save(patch);
+          if (!clip.fps && !probing.current) {
+            probing.current = true;
+            setDetecting(true);
+            void detectFps(v).then(measured => {
+              if (videoRef.current !== v) return;
+              setFps(measured);
+              save({ fps: measured });
+            }).finally(() => { if (videoRef.current === v) setDetecting(false); });
+          }
+        }}
+        onFirstFrame={() => {
+          setFrameReady(true);
+          if (clip.poster) return;
+          try {
+            const poster = grabPoster();
+            if (poster) save({ poster });
+          } catch { /* A missing poster never blocks playback. */ }
         }}
       >
         {detecting && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black text-sm text-white/80">
             <Loader2 className="size-4 animate-spin" />
-            {clip.keyframes.length ? "Loading your keyframes…" : "Analyzing video…"}
+            Measuring frame rate…
           </div>
         )}
       </VideoFrame>
@@ -469,6 +436,7 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
               <div className="flex items-baseline gap-2 rounded-lg border border-border bg-input-background px-3 py-2">
                 <Input
                   id="fps-input"
+                  disabled={detecting}
                   type="number"
                   min={1}
                   max={240}
@@ -476,7 +444,7 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
                   value={Number(fps.toFixed(3))}
                   onChange={(e) => {
                     const v = parseFloat(e.target.value);
-                    if (isFinite(v) && v > 0) setFps(v);
+                    if (isFinite(v) && v > 0) { setFps(v); save({ fps: v }); }
                   }}
                   className="h-8 w-24 border-0 bg-transparent px-0 font-mono tabular-nums shadow-none focus-visible:ring-0"
                 />
@@ -503,12 +471,13 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
       {/* Capture action */}
       <Button
         className="h-11 w-full transition-transform active:scale-95"
+        disabled={!frameReady || detecting}
         onClick={captureCurrent}
       >
         <Camera className="size-4" /> Capture this frame
       </Button>
 
-      {suggestOn && SUGGEST_MODES.includes(analysisMode) && !detecting && (
+      {suggestOn && frameReady && SUGGEST_MODES.includes(analysisMode) && !detecting && (
         <SuggestKeyframes
           videoUrl={url}
           mode={analysisMode}
@@ -583,7 +552,7 @@ export function Analyzer({ clip, videoUrl: url, loadId }: AnalyzerProps) {
           </p>
         </div>
         <KeyframeStrip
-          keyframes={keyframes}
+          keyframes={displayFrames}
           selected={selected}
           onSelect={clickKeyframe}
           onRemove={removeKeyframe}
