@@ -1,3 +1,5 @@
+import { clearPreviews } from "../frame-preview-cache";
+import { reqToPromise, txDone } from "../indexed-db";
 // IndexedDB implementation of ClipStore. Everything stays in this browser, so
 // share links only open here — the Supabase store (see
 // plans/2-clip-library-and-sharing.md) makes them public.
@@ -33,20 +35,6 @@ function openDb(): Promise<IDBDatabase> {
       resolve(req.result);
     };
     req.onerror = () => reject(req.error);
-  });
-}
-
-export function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-export function txDone(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(tx.error ?? new Error("Browser storage transaction aborted"));
   });
 }
 
@@ -188,6 +176,7 @@ export class LocalClipStore implements ClipStore {
       else shares.delete(s.id);
     }
     await txDone(tx);
+    void clearPreviews(id).catch(() => {});
     this.emit();
   }
 

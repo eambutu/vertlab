@@ -60,11 +60,13 @@ export function detectFps(video: HTMLVideoElement): Promise<number> {
     const startTime = video.currentTime;
     const wasMuted = video.muted;
     let settled = false;
+    let callbackId: number;
 
     const finish = (fps: number) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      anyVideo.cancelVideoFrameCallback?.(callbackId);
       video.pause();
       video.muted = wasMuted;
       try {
@@ -83,20 +85,21 @@ export function detectFps(video: HTMLVideoElement): Promise<number> {
     };
 
     const onFrame = (_now: number, meta: { mediaTime: number }) => {
+      if (settled) return;
       if (lastMediaTime !== null) deltas.push(meta.mediaTime - lastMediaTime);
       lastMediaTime = meta.mediaTime;
       if (deltas.length >= SAMPLES) {
         finish(computeFps());
         return;
       }
-      anyVideo.requestVideoFrameCallback!(onFrame);
+      callbackId = anyVideo.requestVideoFrameCallback!(onFrame);
     };
 
     // Safety net: never hang if playback can't start.
     const timeout = setTimeout(() => finish(deltas.length ? computeFps() : 30), 4000);
 
     video.muted = true;
-    anyVideo.requestVideoFrameCallback!(onFrame);
+    callbackId = anyVideo.requestVideoFrameCallback!(onFrame);
     const playPromise = video.play();
     if (playPromise && typeof playPromise.catch === "function") {
       playPromise.catch(() => finish(30));

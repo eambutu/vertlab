@@ -139,6 +139,8 @@ test("repeated failures without progress stop automatically and keep the local f
     await row.locator("..").getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Retry upload" }).click();
     await expect.poll(() => api.events.filter(x => x === "PATCH 0").length).toBe(6);
+    // Let the last request finish before tearing down its HTTP server.
+    await expect(page.getByText(/Waiting to retry/)).toBeVisible();
   } finally { await api.close(); }
 });
 

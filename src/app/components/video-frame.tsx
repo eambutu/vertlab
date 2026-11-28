@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import { useRef, type ReactNode, type Ref } from "react";
 import { ErrorReport } from "./error-report";
 import type { useVideoDiagnostics } from "./use-video-diagnostics";
 
@@ -10,6 +10,7 @@ interface VideoFrameProps {
   preload?: "metadata";
   diagnostics: ReturnType<typeof useVideoDiagnostics>;
   onMetadata: (video: HTMLVideoElement) => void;
+  onFirstFrame?: (video: HTMLVideoElement) => void;
   onError?: () => void;
   onTogglePlay: () => void;
   onPlayingChange: (playing: boolean) => void;
@@ -17,9 +18,17 @@ interface VideoFrameProps {
 }
 
 export function VideoFrame({
-  videoRef, src, aspect, poster, preload, diagnostics, onMetadata, onError,
+  videoRef, src, aspect, poster, preload, diagnostics, onMetadata, onFirstFrame, onError,
   onTogglePlay, onPlayingChange, children,
 }: VideoFrameProps) {
+  const firstFrameSource = useRef<string>();
+  function frameReady(video: HTMLVideoElement) {
+    diagnostics.onFrameReady(video);
+    if (firstFrameSource.current !== src) {
+      firstFrameSource.current = src;
+      onFirstFrame?.(video);
+    }
+  }
   return (
     <div className="relative flex justify-center overflow-hidden rounded-2xl border border-border bg-black">
       <video
@@ -36,8 +45,8 @@ export function VideoFrame({
           diagnostics.onMetadata(currentTarget);
           onMetadata(currentTarget);
         }}
-        onLoadedData={({ currentTarget }) => diagnostics.onFrameReady(currentTarget)}
-        onCanPlay={({ currentTarget }) => diagnostics.onFrameReady(currentTarget)}
+        onLoadedData={({ currentTarget }) => frameReady(currentTarget)}
+        onCanPlay={({ currentTarget }) => frameReady(currentTarget)}
         onStalled={({ currentTarget }) => diagnostics.onStalled(currentTarget)}
         onError={({ currentTarget }) => {
           diagnostics.onError(currentTarget);

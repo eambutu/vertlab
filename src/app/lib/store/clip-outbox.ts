@@ -1,4 +1,4 @@
-import { reqToPromise, txDone } from "./local-store";
+import { reqToPromise, txDone } from "../indexed-db";
 import type { Clip, ClipPatch } from "./types";
 
 export interface PendingVideo {
